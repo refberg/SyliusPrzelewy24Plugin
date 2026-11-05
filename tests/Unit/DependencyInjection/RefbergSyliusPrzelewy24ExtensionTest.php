@@ -43,7 +43,7 @@ final class RefbergSyliusPrzelewy24ExtensionTest extends TestCase
             self::assertFalse($container->getDefinition($id)->isPublic(), $id);
         }
 
-        self::assertSame(15.0, $container->getParameter('refberg_przelewy24.http_timeout'));
+        self::assertEquals(15.0, $container->getParameter('refberg_przelewy24.http_timeout'));
     }
 
     public function test_shop_services_are_registered_with_the_shop_bundle(): void

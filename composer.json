@@ -18,6 +18,7 @@
     ],
     "require": {
         "php": "^8.2",
+        "ext-ctype": "*",
         "ext-filter": "*",
         "ext-json": "*",
         "ext-mbstring": "*",

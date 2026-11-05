@@ -104,9 +104,13 @@ final readonly class NotificationParser implements NotificationParserInterface
     {
         $sessionId = Json::string($data, 'sessionId');
         $orderId = Json::int($data, 'orderId');
+        if (null === $sessionId || null === $orderId) {
+            return null;
+        }
+
         $amount = Json::int($data, 'amount');
         $currency = Json::string($data, 'currency');
-        if (null === $sessionId || null === $orderId || null === $amount || null === $currency) {
+        if (null === $amount || null === $currency) {
             return null;
         }
 

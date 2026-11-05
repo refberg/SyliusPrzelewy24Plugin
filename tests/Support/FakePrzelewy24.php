@@ -13,6 +13,7 @@ use function array_key_last;
 use function array_keys;
 use function array_map;
 use function array_merge;
+use function array_splice;
 use function array_values;
 use function base64_encode;
 use function bin2hex;
@@ -100,8 +101,7 @@ final class FakePrzelewy24
 
         foreach ($this->queuedFailures as $index => [$status, $data, $pathPattern]) {
             if (null === $pathPattern || 1 === preg_match($pathPattern, $path)) {
-                unset($this->queuedFailures[$index]);
-                $this->queuedFailures = array_values($this->queuedFailures);
+                array_splice($this->queuedFailures, $index, 1);
 
                 return self::json($status, $data);
             }
@@ -189,7 +189,7 @@ final class FakePrzelewy24
     {
         $last = array_key_last($this->transactions);
 
-        return null !== $last ? (string) $last : throw new LogicException('No Przelewy24 transaction has been registered.');
+        return null !== $last ? $last : throw new LogicException('No Przelewy24 transaction has been registered.');
     }
 
     /**

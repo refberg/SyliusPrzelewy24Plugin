@@ -43,12 +43,12 @@ final class HeadlessApiPaymentFlowTest extends IntegrationTestCase
         self::assertSame([], $this->p24->requests());
     }
 
-    public function test_container_has_no_shop_or_admin_services(): void
+    public function test_application_runs_without_the_shop_the_admin_and_twig_hooks(): void
     {
-        $container = self::getContainer();
-
-        self::assertFalse($container->has('sylius_shop.provider.order_pay.after_pay_url'));
-        self::assertFalse($container->has('sylius_twig_hooks.registry.hooks'));
+        $bundles = self::getContainer()->getParameter('kernel.bundles');
+        foreach (['SyliusShopBundle', 'SyliusAdminBundle', 'SyliusTwigHooksBundle'] as $bundle) {
+            self::assertArrayNotHasKey($bundle, $bundles);
+        }
     }
 
     protected static function getKernelClass(): string

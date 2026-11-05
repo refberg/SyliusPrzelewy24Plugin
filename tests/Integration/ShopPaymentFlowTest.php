@@ -18,7 +18,6 @@ use Sylius\Component\Payment\PaymentTransitions;
 use Symfony\Component\HttpFoundation\Response;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
 use function json_decode;
-use function json_encode;
 use function str_replace;
 use const JSON_THROW_ON_ERROR;
 

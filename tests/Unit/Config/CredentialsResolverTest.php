@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Refberg\SyliusPrzelewy24Plugin\Unit\Config;
 
+use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Refberg\SyliusPrzelewy24Plugin\Config\CredentialsResolver;
 use Refberg\SyliusPrzelewy24Plugin\Config\Environment;
 use Refberg\SyliusPrzelewy24Plugin\Config\InvalidConfigurationException;
-use LogicException;
 use Refberg\SyliusPrzelewy24Plugin\Przelewy24Gateway;
 use Sylius\Bundle\PayumBundle\Model\GatewayConfig;
 use Sylius\Component\Core\Model\PaymentMethod;
