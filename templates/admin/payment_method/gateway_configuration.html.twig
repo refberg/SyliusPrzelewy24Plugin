@@ -1,0 +1,19 @@
+{% set config = hookable_metadata.context.form.gatewayConfig.config %}
+
+<div class="col-12">
+    <div class="row">
+        <div class="col-12 col-md-6">{{ form_row(config.environment) }}</div>
+        <div class="col-12 col-md-6">{{ form_row(config.merchant_id) }}</div>
+        <div class="col-12 col-md-6">{{ form_row(config.pos_id) }}</div>
+        <div class="col-12 col-md-6">{{ form_row(config.crc_key) }}</div>
+        <div class="col-12 col-md-6">{{ form_row(config.api_key) }}</div>
+    </div>
+
+    {% set code = hookable_metadata.context.form.vars.data.code|default(null) %}
+    {% if code %}
+        <div class="alert alert-info mt-3">
+            {{ 'refberg_przelewy24.form.gateway_configuration.notify_url'|trans }}
+            <code>{{ url('sylius_payment_method_notify', {code: code}) }}</code>
+        </div>
+    {% endif %}
+</div>

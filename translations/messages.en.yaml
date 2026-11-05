@@ -1,0 +1,15 @@
+refberg_przelewy24:
+    gateway_factory:
+        refberg_przelewy24: Przelewy24
+    form:
+        gateway_configuration:
+            environment: Environment
+            environment_sandbox: Sandbox (sandbox.przelewy24.pl)
+            environment_production: Production (secure.przelewy24.pl)
+            merchant_id: Merchant ID
+            pos_id: Shop ID (posId)
+            pos_id_help: Leave empty to use the merchant ID.
+            crc_key: CRC key
+            api_key: API key (reports key)
+            secret_help: Stored encrypted. Leave empty to keep the current value.
+            notify_url: 'Notification URL (sent automatically with every transaction):'

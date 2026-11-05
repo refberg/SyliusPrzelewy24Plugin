@@ -1,0 +1,8 @@
+imports:
+    - { resource: "services_test.php" }
+
+when@test:
+    # Admin pages must not download icons from the Iconify API: tests run without network access.
+    ux_icons:
+        iconify:
+            enabled: false
