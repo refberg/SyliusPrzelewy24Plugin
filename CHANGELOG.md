@@ -16,6 +16,7 @@ and removed in 2.0.
   panel are recorded and subtracted from refunds requested by Sylius.
 - Cancelling a payment in Sylius closes its transactions: a later payment of them is never verified.
 - Support for applications without the Sylius shop, admin panel or Twig Hooks.
+- Documented limit: customer email addresses longer than 50 characters cannot pay with Przelewy24 (API limit).
 - Support for Sylius 2.2.12+ and 2.3.2+, PHP 8.2 to 8.5 and Symfony 6.4, 7.4 and 8.x.
 
 ### Changed

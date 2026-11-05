@@ -26,6 +26,9 @@ Nie używa Payum.
 - Pełne zwroty z panelu administracyjnego; zwroty zlecone w panelu Przelewy24 są zapisywane.
 - Dane dostępowe są przechowywane w postaci zaszyfrowanej przez Syliusa i nie trafiają do logów.
 
+Przelewy24 przyjmuje adresy e-mail klienta o długości najwyżej 50 znaków; capture dla dłuższego adresu kończy się błędem
+bez wywołania Przelewy24, a klient musi wybrać inną metodę płatności.
+
 Poza zakresem: BLIK i karty osadzone w sklepie, płatności one-click, raty, częściowe zwroty zlecane z Syliusa.
 
 ## Wymagania

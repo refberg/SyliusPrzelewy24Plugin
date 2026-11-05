@@ -20,6 +20,7 @@ use Sylius\Bundle\PaymentBundle\Provider\PaymentRequestProviderInterface;
 use Sylius\Component\Core\Model\OrderInterface;
 use Sylius\Component\Payment\Model\PaymentInterface;
 use Sylius\Component\Payment\Model\PaymentRequestInterface;
+use Symfony\Component\Routing\Exception\ExceptionInterface as RoutingExceptionInterface;
 use Symfony\Component\Routing\Generator\UrlGeneratorInterface;
 use function sprintf;
 use function str_replace;
@@ -106,6 +107,15 @@ final readonly class RefundPaymentRequestHandler
         $refundsUuid = str_replace('-', '', $requestId);
 
         try {
+            $urlStatus = $this->urlGenerator->generate(Przelewy24Gateway::NOTIFY_ROUTE, ['code' => $method->getCode()], UrlGeneratorInterface::ABSOLUTE_URL);
+        } catch (RoutingExceptionInterface $exception) {
+            $this->logger->error('Przelewy24 refund not requested: the payment notification route is missing.', ['payment_id' => $payment->getId()]);
+            $this->failRequest($paymentRequest, $exception->getMessage());
+
+            return;
+        }
+
+        try {
             $this->client->refund($credentials, new RefundRequest(
                 requestId: $requestId,
                 refundsUuid: $refundsUuid,
@@ -113,7 +123,7 @@ final readonly class RefundPaymentRequestHandler
                 sessionId: $sessionId,
                 amount: $amount,
                 description: sprintf('Refund %s', $order instanceof OrderInterface ? (string) $order->getNumber() : ''),
-                urlStatus: $this->urlGenerator->generate(Przelewy24Gateway::NOTIFY_ROUTE, ['code' => $method->getCode()], UrlGeneratorInterface::ABSOLUTE_URL),
+                urlStatus: $urlStatus,
             ));
         } catch (Przelewy24Exception $exception) {
             $this->logger->error('Przelewy24 refund request failed; refund has to be handled manually.', [

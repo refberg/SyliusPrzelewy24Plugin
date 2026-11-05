@@ -27,6 +27,9 @@ It does not use Payum.
 - Full refunds from the admin panel; refunds made in the Przelewy24 panel are recorded.
 - Credentials are stored encrypted by Sylius and are not written to logs.
 
+Przelewy24 accepts customer email addresses of at most 50 characters; a capture for a longer address fails without calling
+Przelewy24, and the customer has to choose another payment method.
+
 Out of scope: BLIK and card payments embedded in the shop, one-click payments, installments, partial refunds started
 from Sylius.
 
