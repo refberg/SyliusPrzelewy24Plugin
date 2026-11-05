@@ -196,3 +196,19 @@ jobs:
             -
                 name: Run Infection
                 run: infection --threads=max --no-progress --show-mutations=10
+
+    # One required check for the branch protection of main, independent of the job names in the matrix.
+    ci-passed:
+        runs-on: ubuntu-latest
+        name: "CI passed"
+        if: always()
+        needs: [quality, tests, mutation]
+
+        steps:
+            -
+                name: Check the results of all jobs
+                run: |
+                    if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "true" ]; then
+                        echo "At least one job did not succeed."
+                        exit 1
+                    fi
