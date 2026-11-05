@@ -1,0 +1,34 @@
+{
+    // Mutation testing covers the security-relevant logic that has unit tests:
+    // API client, sign, notification parsing, transaction validation and payment state rules.
+    "source": {
+        "directories": [
+            "src/Api",
+            "src/Config",
+            "src/Notification",
+            "src/Order",
+            "src/Payment",
+            "src/Signature"
+        ],
+        "excludes": [
+            "Payment/PaymentLocker.php"
+        ]
+    },
+    // Log calls are diagnostics, not behaviour: mutating their context is not worth a test.
+    "mutators": {
+        "@default": true,
+        "global-ignoreSourceCodeByRegex": [
+            "\\$this->logger->.*"
+        ]
+    },
+    "phpUnit": {
+        "customPath": "vendor/bin/phpunit"
+    },
+    "testFrameworkOptions": "--testsuite=unit",
+    "logs": {
+        "text": "var/infection.log",
+        "github": true
+    },
+    "minMsi": 80,
+    "minCoveredMsi": 80
+}

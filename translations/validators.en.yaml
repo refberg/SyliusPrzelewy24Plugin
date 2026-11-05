@@ -1,0 +1,3 @@
+refberg_przelewy24:
+    id:
+        invalid: The ID must contain digits only.
