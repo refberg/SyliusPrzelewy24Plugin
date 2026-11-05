@@ -189,7 +189,7 @@ final class FakePrzelewy24
     {
         $last = array_key_last($this->transactions);
 
-        return null !== $last ? $last : throw new LogicException('No Przelewy24 transaction has been registered.');
+        return $last ?? throw new LogicException('No Przelewy24 transaction has been registered.');
     }
 
     /**

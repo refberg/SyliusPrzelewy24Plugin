@@ -11,8 +11,7 @@
             "src/Signature"
         ],
         "excludes": [
-            "Payment/PaymentLocker.php",
-            "Order/TransactionRequestFactory.php"
+            "Payment/PaymentLocker.php"
         ]
     },
     // Log calls are diagnostics, not behaviour: mutating their context is not worth a test.
