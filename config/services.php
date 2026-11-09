@@ -154,6 +154,9 @@ return static function (ContainerConfigurator $container): void {
             ->tag('messenger.message_handler', ['bus' => 'sylius.payment_request.command_bus'])
             ->tag('monolog.logger', $channel);
     }
+    foreach ([StatusPaymentRequestHandler::class, NotifyPaymentRequestHandler::class] as $class) {
+        $services->get($class)->arg('$paymentRequestRepository', service('sylius.repository.payment_request'));
+    }
 
     // Notifications
     $services->set(Przelewy24NotifyPaymentProvider::class)

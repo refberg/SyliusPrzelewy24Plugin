@@ -193,6 +193,7 @@ $paymentMethodRepository->add($paymentMethod);
    one changes nothing.
 
 Opening the pay page again reuses the transaction that is still waiting for the payment.
+Once the notification or the status check finds that transaction paid, its capture payment request is completed.
 Przelewy24 reports only paid transactions, so a payment is never marked as failed by the plugin; the customer can pay
 again from the order page.
 
@@ -238,7 +239,7 @@ status (`0` no payment, `1` paid and not verified, `2` paid and verified, `3` re
 
 A payment that is completed is never moved back. If a second transaction of the same payment is paid (for example
 after the customer retried in another tab), the plugin does not verify it, so Przelewy24 does not settle it. The plugin
-records a `duplicate_payment` warning in the payment details (`refberg_przelewy24.warnings`) and logs an error on the
+records a `duplicate_payment` warning in the payment details (`refberg_przelewy24.warnings`) and logs a critical message on the
 `przelewy24` channel. Check the transaction in the Przelewy24 panel; an unverified payment stays at the customer's
 disposal as an advance payment.
 

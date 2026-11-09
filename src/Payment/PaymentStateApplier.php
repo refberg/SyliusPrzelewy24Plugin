@@ -76,7 +76,7 @@ final readonly class PaymentStateApplier implements PaymentStateApplierInterface
         $warning = null !== $completedSessionId ? PaymentDetails::WARNING_DUPLICATE_PAYMENT : PaymentDetails::WARNING_LATE_PAYMENT;
         $details->addWarning($warning, $transaction->sessionId);
 
-        $this->logger->error(
+        $this->logger->critical(
             Transaction::STATUS_ADVANCE_PAYMENT === $transaction->status
                 ? 'Przelewy24 transaction was paid, but the Sylius payment cannot be completed; the transaction was not verified, so Przelewy24 keeps it as an advance payment of the customer.'
                 : 'Przelewy24 transaction was paid and verified, but the Sylius payment cannot be completed. Manual refund may be needed.',

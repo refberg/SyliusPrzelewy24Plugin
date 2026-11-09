@@ -14,6 +14,11 @@ and removed in 2.0.
   `transaction/verify` only when they complete the payment.
 - Full refunds from the admin panel (`transaction/refund`) with refund notifications; refunds made in the Przelewy24
   panel are recorded and subtracted from refunds requested by Sylius.
+- The capture payment request is completed when the notification or the status check finds its transaction paid
+  (verified or not); the status check also completes capture requests left processing for transactions that were
+  already paid.
+- A transaction paid after the Sylius payment was already completed by another transaction, failed or cancelled is
+  logged as `critical` and recorded as a warning in the payment details.
 - Cancelling a payment in Sylius closes its transactions: a later payment of them is never verified.
 - Support for applications without the Sylius shop, admin panel or Twig Hooks.
 - Documented limit: customer email addresses longer than 50 characters cannot pay with Przelewy24 (API limit).

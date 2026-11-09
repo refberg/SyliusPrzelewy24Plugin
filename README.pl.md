@@ -189,6 +189,7 @@ $paymentMethodRepository->add($paymentMethod);
    i kończy płatność. Pracę wykonuje to, co przyjdzie pierwsze (powrót lub powiadomienie); drugie niczego nie zmienia.
 
 Ponowne otwarcie strony płatności używa transakcji, która nadal czeka na wpłatę.
+Gdy powiadomienie lub sprawdzenie statusu stwierdzi, że ta transakcja jest opłacona, jej payment request capture zostaje zakończony.
 Przelewy24 informuje tylko o opłaconych transakcjach, więc plugin nigdy nie oznacza płatności jako nieudanej;
 klient może zapłacić ponownie ze strony zamówienia.
 
@@ -234,7 +235,7 @@ Content-Type: application/ld+json
 
 Zakończona płatność nigdy nie wraca do wcześniejszego stanu. Gdy klient opłaci drugą transakcję tej samej płatności
 (np. ponowił płatność w innej karcie), plugin jej nie weryfikuje, więc Przelewy24 jej nie rozlicza. Plugin zapisuje
-ostrzeżenie `duplicate_payment` w szczegółach płatności (`refberg_przelewy24.warnings`) i loguje błąd na kanale
+ostrzeżenie `duplicate_payment` w szczegółach płatności (`refberg_przelewy24.warnings`) i loguje komunikat krytyczny na kanale
 `przelewy24`. Sprawdź transakcję w panelu Przelewy24; niezweryfikowana wpłata zostaje do dyspozycji klienta jako zaliczka.
 
 Jeśli klient po przekierowaniu do Przelewy24 zmieni metodę płatności zamówienia, wcześniej zarejestrowana transakcja
