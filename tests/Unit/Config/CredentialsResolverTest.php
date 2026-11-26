@@ -89,7 +89,7 @@ final class CredentialsResolverTest extends TestCase
         self::assertStringNotContainsString('api', str_replace('apiKey', '', $output));
 
         $this->expectException(LogicException::class);
-        serialize($credentials);
+        self::fail('Credentials must not be serializable: ' . serialize($credentials));
     }
 
     /**
