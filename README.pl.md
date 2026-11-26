@@ -35,11 +35,11 @@ Poza zakresem: BLIK i karty osadzone w sklepie, płatności one-click, raty, cz�
 
 | Sylius  | PHP     | Symfony                                 |
 |---------|---------|-----------------------------------------|
-| 2.2.12+ | 8.2–8.4 | 6.4, 7.4                                |
-| 2.3.2+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x wymaga PHP 8.4+)     |
+| 2.2.13+ | 8.2–8.4 | 6.4, 7.4                                |
+| 2.3.3+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x wymaga PHP 8.4+)     |
 
-Sylius 2.2.12 i 2.3.2 to pierwsze wersje z poprawkami bezpieczeństwa API payment requestów
-(`UPGRADE-API-2.2.md`, `UPGRADE-API-2.3.md`).
+Sylius 2.2.13 i 2.3.3 to pierwsze wersje z poprawkami do advisories bezpieczeństwa Syliusa z 2026-11-18;
+Composer nie instaluje starszych wersji.
 
 Sklep (`SyliusShopBundle`) i panel administracyjny (`SyliusAdminBundle`, `SyliusTwigHooksBundle`) są opcjonalne,
 więc plugin działa też w aplikacjach udostępniających tylko API.

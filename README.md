@@ -37,11 +37,11 @@ from Sylius.
 
 | Sylius  | PHP     | Symfony                            |
 |---------|---------|------------------------------------|
-| 2.2.12+ | 8.2–8.4 | 6.4, 7.4                           |
-| 2.3.2+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x needs PHP 8.4+) |
+| 2.2.13+ | 8.2–8.4 | 6.4, 7.4                           |
+| 2.3.3+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x needs PHP 8.4+) |
 
-Sylius 2.2.12 and 2.3.2 are the first versions with the security fixes of the payment request API
-(`UPGRADE-API-2.2.md`, `UPGRADE-API-2.3.md`).
+Sylius 2.2.13 and 2.3.3 are the first versions with the fixes for the Sylius security advisories of 2026-11-18;
+Composer refuses to install older versions.
 
 The Sylius shop (`SyliusShopBundle`) and admin panel (`SyliusAdminBundle`, `SyliusTwigHooksBundle`) are optional,
 so the plugin also works in API-only applications.

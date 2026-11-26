@@ -22,9 +22,13 @@ and removed in 2.0.
 - Cancelling a payment in Sylius closes its transactions: a later payment of them is never verified.
 - Support for applications without the Sylius shop, admin panel or Twig Hooks.
 - Documented limit: customer email addresses longer than 50 characters cannot pay with Przelewy24 (API limit).
-- Support for Sylius 2.2.12+ and 2.3.2+, PHP 8.2 to 8.5 and Symfony 6.4, 7.4 and 8.x.
+- Support for Sylius 2.2.13+ and 2.3.3+, PHP 8.2 to 8.5 and Symfony 6.4, 7.4 and 8.x.
 
 ### Changed
+
+- Requires `sylius/sylius` 2.2.13+ or 2.3.3+, the first versions with the fixes for the Sylius security advisories
+  GHSA-qf53-r587-295p, GHSA-vhpc-rcxq-vfgr and GHSA-fpgw-g9hj-m43q of 2026-11-18 (Composer refuses to install the
+  vulnerable versions).
 
 ### Deprecated
 
