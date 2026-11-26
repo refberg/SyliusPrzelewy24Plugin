@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Refberg\SyliusPrzelewy24Plugin\Api;
 
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24Exception;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundRequest;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\TransactionRegistered;
@@ -37,4 +38,13 @@ interface Przelewy24ClientInterface
      * @throws Przelewy24Exception
      */
     public function refund(Przelewy24Credentials $credentials, RefundRequest $refund): void;
+
+    /**
+     * Refunds of a transaction (GET /api/v1/refund/by/orderId/{orderId}). Przelewy24 answers 404 when there are none.
+     *
+     * @throws Przelewy24Exception
+     *
+     * @return list<RefundListed>
+     */
+    public function getRefunds(Przelewy24Credentials $credentials, int $orderId): array;
 }

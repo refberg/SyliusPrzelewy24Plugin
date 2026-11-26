@@ -252,10 +252,16 @@ payment from Sylius therefore reach Przelewy24.
 
 Notifications with a missing or invalid `sign`, or of another merchant or shop, get HTTP 400 and are not stored.
 Notifications for unknown transactions get HTTP 404. When the Przelewy24 API cannot be reached or rejects the plugin
-credentials (HTTP 401/403), the endpoint answers with HTTP 5xx. This works only with a synchronous payment request
-transport (`sync://`, the Sylius default): with an asynchronous transport the endpoint answers before the notification
-is handled. Przelewy24 also repeats a notification (after 3, 5, 15, 30, 60, 150 and 450 minutes) until the transaction is
-verified, so a payment is completed by a later notification once the API answers again.
+credentials (HTTP 401/403), or does not list a notified refund requested by Sylius or its final status yet, the endpoint
+answers with HTTP 5xx. This works only with a synchronous payment request transport (`sync://`, the Sylius default):
+with an asynchronous transport the endpoint answers HTTP 200 before the notification is handled, so Przelewy24 does not
+retry. Messenger then retries only these errors (not payment requests marked as failed), according to the
+`retry_strategy` of the `payment_request` transport, and sends the message to the `payment_request_failed` failure
+transport. That transport is `sync://` by default (`SYLIUS_MESSENGER_TRANSPORT_PAYMENT_REQUEST_FAILED_DSN`), which
+handles the message once more instead of keeping it; set it to a persistent transport to keep failed messages, then
+retry them with `messenger:failed:retry --transport=payment_request_failed`. Przelewy24 also repeats a notification
+(after 3, 5, 15, 30, 60, 150 and 450 minutes) until the transaction is verified, so a payment is completed by a later
+notification once the API answers again.
 
 ### Refunds
 
@@ -264,6 +270,16 @@ less all refunds that are not rejected (including refunds made in the Przelewy24
 payment request ID and `refundsUuid` the same ID without dashes, so a redelivered request is refused by Przelewy24
 ("Request already exists") instead of creating a second refund. The final refund status (completed or rejected) arrives
 in a refund notification and is stored in the payment details.
+
+After verifying the `sign` of a refund notification, the plugin reads the refunds of the transaction from the Przelewy24
+API (`GET /api/v1/refund/by/orderId/{orderId}`) and takes the status and amount of the refund with the same `requestId`
+from there, not from the notification body. The notification payment request fails and nothing changes when the
+amount, currency or final status in the API differs from the signed notification, when the amount differs from the
+refund requested by Sylius, or when the API does not list a refund made in the Przelewy24 panel for the transaction in
+the payment currency. When the API does not list a refund requested by Sylius yet, or still shows it as pending, the
+endpoint answers with HTTP 5xx and changes nothing, so the notification is retried. Refunds that the API lists without
+`requestId`, a known status or an amount are skipped (the last two with a warning in the log) and count as not listed: a skipped refund requested by Sylius
+is retried until the retries run out, so check the log for the warning and the refund in the Przelewy24 panel.
 
 When refunds made in the Przelewy24 panel already cover the whole payment, the plugin does not call Przelewy24 and
 completes the refund payment request.
@@ -288,9 +304,16 @@ verified either.
 ### Refunds made in the Przelewy24 panel
 
 A signed refund notification for a refund that Sylius did not request is recorded in the payment details with the
-`external` flag. When completed refunds cover the whole payment amount, the payment is moved to `refunded` without
-sending another refund to Przelewy24. Partial refunds only show up in the payment details, because Sylius has no state
-for them.
+`external` flag, unless its amount read from the Przelewy24 API is larger than the payment or its `requestId` is already
+recorded (`requestId` is not covered by the `sign`). When completed refunds cover the whole payment amount, the payment
+is moved to `refunded` without sending another refund to Przelewy24. Partial refunds only show up in the payment
+details, because Sylius has no state for them.
+
+Because Przelewy24 does not sign `requestId`, the plugin cannot tell apart panel refunds of the same transaction with
+the same amount, currency and status. An intercepted signed notification resent with another `requestId` can at most leave
+a refund unrecorded (the recorded refunds are then lower than in Przelewy24). It never records a refund twice, never
+records more than Przelewy24 lists, and never takes over a refund requested by Sylius, whose `requestId` is read from
+the payment details.
 
 ## Assumptions not yet confirmed in the Przelewy24 sandbox
 
@@ -304,6 +327,9 @@ These points are not stated there and are covered by tests against the fake API 
 - Przelewy24 does not need a particular HTTP status in the response to a notification; it repeats notifications until
   the transaction is verified.
 - Refunds made in the Przelewy24 panel are notified to the default refund notification URL, when it is set.
+- Refund notifications and the `refund/by/orderId` list carry the `requestId` of refunds made in the Przelewy24 panel.
+  A panel refund without `requestId`, or not listed by the API, is not recorded.
+- Przelewy24 retries a refund notification answered with HTTP 5xx.
 - A transaction registered before the customer switched the payment method in Sylius can still be paid.
 
 ## Security notes

@@ -12,6 +12,12 @@ use Sylius\Component\Core\Model\PaymentInterface;
 use Sylius\Component\Payment\Model\PaymentRequestInterface;
 use Sylius\Component\Payment\PaymentTransitions;
 use Symfony\Component\HttpFoundation\Response;
+use function array_filter;
+use function array_map;
+use function array_values;
+use function json_decode;
+use function json_encode;
+use const JSON_THROW_ON_ERROR;
 
 final class CancelAndExternalRefundTest extends IntegrationTestCase
 {
@@ -112,6 +118,50 @@ final class CancelAndExternalRefundTest extends IntegrationTestCase
         $sessionId = $this->p24->lastSessionId();
         $refundsUuid = $this->p24->createPanelRefund($sessionId, 1500);
         $this->p24->overrideTransaction($sessionId, 'currency', 'EUR');
+
+        self::assertSame(Response::HTTP_OK, $this->notify($this->p24->refundNotificationBody($refundsUuid, Refund::NOTIFICATION_STATUS_COMPLETED))->getStatusCode());
+
+        self::assertSame('completed', $this->reloadPayment($payment)->getState());
+        self::assertSame([], $this->details($payment)->refunds());
+    }
+
+    public function test_panel_refund_not_listed_by_przelewy24_is_not_recorded(): void
+    {
+        $payment = $this->paidPayment();
+        $refundsUuid = $this->p24->createPanelRefund($this->p24->lastSessionId(), 1500);
+        $body = json_decode($this->p24->refundNotificationBody($refundsUuid, Refund::NOTIFICATION_STATUS_COMPLETED), true, 8, JSON_THROW_ON_ERROR);
+        self::assertIsArray($body);
+        $body['requestId'] = 'not-listed';
+
+        self::assertSame(Response::HTTP_OK, $this->notify(json_encode($body, JSON_THROW_ON_ERROR))->getStatusCode());
+
+        self::assertSame('completed', $this->reloadPayment($payment)->getState());
+        self::assertSame([], $this->details($payment)->refunds());
+        $failed = array_filter($this->paymentRequests(PaymentRequestInterface::ACTION_NOTIFY), static fn (PaymentRequestInterface $request): bool => PaymentRequestInterface::STATE_FAILED === $request->getState());
+        self::assertSame([['error' => 'The Przelewy24 API does not list this refund for the transaction.']], array_values(array_map(static fn (PaymentRequestInterface $request): array => $request->getResponseData(), $failed)));
+    }
+
+    public function test_panel_refund_notification_with_the_request_id_of_another_refund_is_not_recorded(): void
+    {
+        $payment = $this->paidPayment();
+        $sessionId = $this->p24->lastSessionId();
+        $first = $this->p24->createPanelRefund($sessionId, 500);
+        $second = $this->p24->createPanelRefund($sessionId, 1000);
+        $body = json_decode($this->p24->refundNotificationBody($first, Refund::NOTIFICATION_STATUS_COMPLETED), true, 8, JSON_THROW_ON_ERROR);
+        self::assertIsArray($body);
+        $body['requestId'] = 'panel-' . $second;
+
+        self::assertSame(Response::HTTP_OK, $this->notify(json_encode($body, JSON_THROW_ON_ERROR))->getStatusCode());
+
+        self::assertSame([], $this->details($payment)->refunds());
+        $failed = array_filter($this->paymentRequests(PaymentRequestInterface::ACTION_NOTIFY), static fn (PaymentRequestInterface $request): bool => PaymentRequestInterface::STATE_FAILED === $request->getState());
+        self::assertSame([['error' => 'The Przelewy24 API lists this refund with another amount, currency or status.']], array_values(array_map(static fn (PaymentRequestInterface $request): array => $request->getResponseData(), $failed)));
+    }
+
+    public function test_panel_refund_above_the_payment_amount_is_ignored(): void
+    {
+        $payment = $this->paidPayment();
+        $refundsUuid = $this->p24->createPanelRefund($this->p24->lastSessionId(), 1501);
 
         self::assertSame(Response::HTTP_OK, $this->notify($this->p24->refundNotificationBody($refundsUuid, Refund::NOTIFICATION_STATUS_COMPLETED))->getStatusCode());
 

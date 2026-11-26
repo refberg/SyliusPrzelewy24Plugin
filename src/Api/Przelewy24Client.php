@@ -8,6 +8,8 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24ApiException;
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24TransportException;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\Refund;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundRequest;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\TransactionRegistered;
@@ -153,6 +155,45 @@ final readonly class Przelewy24Client implements Przelewy24ClientInterface
         }
 
         $this->logger->info('Przelewy24 refund requested.', ['p24_order_id' => $refund->orderId, 'refunds_uuid' => $refund->refundsUuid]);
+    }
+
+    public function getRefunds(Przelewy24Credentials $credentials, int $orderId): array
+    {
+        [$statusCode, $data] = $this->request($credentials, 'GET', '/api/v1/refund/by/orderId/' . $orderId);
+        if (200 !== $statusCode) {
+            throw $this->apiError('Reading Przelewy24 refunds failed', $statusCode, $data);
+        }
+
+        $result = $data['data'] ?? null;
+        $result = is_array($result) ? $result : [];
+        $currency = Json::string($result, 'currency');
+        $items = $result['refunds'] ?? null;
+        if (Json::int($result, 'orderId') !== $orderId || null === $currency || !is_array($items)) {
+            throw new Przelewy24ApiException('Przelewy24 refund list response is incomplete.', $statusCode);
+        }
+
+        $refunds = [];
+        foreach ($items as $item) {
+            $item = is_array($item) ? $item : [];
+            $requestId = Json::string($item, 'requestId');
+            // Such a refund cannot be matched to a notification; it must not hide the other refunds.
+            if (null === $requestId) {
+                continue;
+            }
+
+            $status = Json::int($item, 'status');
+            $status = null !== $status ? Refund::fromApiStatus($status) : null;
+            $amount = Json::int($item, 'amount');
+            if (null === $status || !is_int($amount)) {
+                $this->logger->warning('Skipped a Przelewy24 refund listed without a known status or an amount.', ['p24_order_id' => $orderId, 'request_id' => $requestId]);
+
+                continue;
+            }
+
+            $refunds[] = new RefundListed($requestId, $status, $amount, $currency);
+        }
+
+        return $refunds;
     }
 
     /**

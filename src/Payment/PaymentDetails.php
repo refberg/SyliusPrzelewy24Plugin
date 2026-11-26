@@ -217,6 +217,31 @@ final class PaymentDetails
         return isset($this->refunds()[$refundsUuid]);
     }
 
+    public function getRefundRequestId(string $refundsUuid): ?string
+    {
+        $requestId = $this->refunds()[$refundsUuid]['request_id'] ?? null;
+
+        return is_string($requestId) ? $requestId : null;
+    }
+
+    public function getRefundAmount(string $refundsUuid): ?int
+    {
+        $amount = $this->refunds()[$refundsUuid]['amount'] ?? null;
+
+        return is_int($amount) ? $amount : null;
+    }
+
+    public function hasRefundWithRequestId(string $requestId): bool
+    {
+        foreach ($this->refunds() as $refund) {
+            if (($refund['request_id'] ?? null) === $requestId) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * A final status (completed, rejected) is never overwritten.
      *
@@ -243,7 +268,7 @@ final class PaymentDetails
      *
      * @return bool false when the refund was already known
      */
-    public function recordExternalRefund(string $refundsUuid, string $status, int $amount, string $currency): bool
+    public function recordExternalRefund(string $refundsUuid, string $requestId, string $status, int $amount, string $currency): bool
     {
         if ($this->hasRefund($refundsUuid)) {
             return false;
@@ -251,6 +276,7 @@ final class PaymentDetails
 
         $refunds = $this->refunds();
         $refunds[$refundsUuid] = [
+            'request_id' => $requestId,
             'status' => $status,
             'amount' => $amount,
             'currency' => $currency,

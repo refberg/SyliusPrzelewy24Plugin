@@ -56,6 +56,12 @@ final class FakePrzelewy24
 
     public const API_KEY = 'test-api-key';
 
+    private const REFUND_COMPLETED = 1;
+
+    private const REFUND_AWAITING_APPROVAL = 3;
+
+    private const REFUND_REJECTED = 4;
+
     /** Above the signed 32-bit range, as the Przelewy24 documentation warns. */
     private const FIRST_ORDER_ID = 3000000000;
 
@@ -115,6 +121,7 @@ final class FakePrzelewy24
             'PUT' === $method && '/api/v1/transaction/verify' === $path => $this->verify($data),
             'POST' === $method && '/api/v1/transaction/refund' === $path => $this->refund($data),
             'GET' === $method && 1 === preg_match('#^/api/v1/transaction/by/sessionId/(.+)$#', $path, $matches) => $this->bySessionId(rawurldecode($matches[1])),
+            'GET' === $method && 1 === preg_match('#^/api/v1/refund/by/orderId/(\d+)$#', $path, $matches) => $this->refundsByOrderId((int) $matches[1]),
             default => self::json(404, ['error' => 'Not found', 'code' => 404]),
         };
     }
@@ -171,10 +178,27 @@ final class FakePrzelewy24
             'orderId' => (int) $transaction['orderId'],
             'sessionId' => $sessionId,
             'amount' => $amount,
-            'status' => 'completed',
+            'status' => self::REFUND_COMPLETED,
         ];
 
         return $refundsUuid;
+    }
+
+    /**
+     * Changes the status that GET /api/v1/refund/by/orderId reports for the refund (1 completed, 2 pending,
+     * 3 awaiting approval, 4 rejected).
+     */
+    public function setRefundApiStatus(string $refundsUuid, int $status): void
+    {
+        foreach ($this->refunds as $index => $refund) {
+            if ($refund['refundsUuid'] === $refundsUuid) {
+                $this->refunds[$index]['status'] = $status;
+
+                return;
+            }
+        }
+
+        throw new OutOfBoundsException('Unknown fake Przelewy24 refund.');
     }
 
     /**
@@ -246,16 +270,19 @@ final class FakePrzelewy24
     }
 
     /**
-     * Builds a signed refund notification as Przelewy24 sends it to the refund urlStatus.
+     * Builds a signed refund notification as Przelewy24 sends it to the refund urlStatus. The refund list of the API
+     * then reports the same final status.
      *
      * @param int $status 0 = completed, 1 = rejected
      */
     public function refundNotificationBody(string $refundsUuid, int $status, ?int $amount = null, string $crcKey = self::CRC_KEY): string
     {
-        foreach ($this->refunds as $refund) {
+        foreach ($this->refunds as $index => $refund) {
             if ($refund['refundsUuid'] !== $refundsUuid) {
                 continue;
             }
+
+            $this->refunds[$index]['status'] = 0 === $status ? self::REFUND_COMPLETED : self::REFUND_REJECTED;
 
             $transaction = $this->transaction((string) $refund['sessionId']);
             $signed = [
@@ -368,6 +395,32 @@ final class FakePrzelewy24
         ], 'responseCode' => 0]);
     }
 
+    private function refundsByOrderId(int $orderId): MockResponse
+    {
+        $refunds = array_values(array_filter($this->refunds, static fn (array $refund): bool => $refund['orderId'] === $orderId));
+        if ([] === $refunds) {
+            return self::json(404, ['error' => 'Transaction not found', 'responseCode' => 0]);
+        }
+
+        $transaction = $this->transaction((string) $refunds[0]['sessionId']);
+
+        return self::json(200, ['data' => [
+            'orderId' => $orderId,
+            'sessionId' => (string) $refunds[0]['sessionId'],
+            'amount' => (int) $transaction['amount'],
+            'currency' => (string) $transaction['currency'],
+            'refunds' => array_map(static fn (array $refund): array => [
+                'batchId' => 0,
+                'requestId' => $refund['requestId'],
+                'date' => '2026-01-01 12:00:00',
+                'login' => 'merchant',
+                'description' => $refund['description'] ?? '',
+                'status' => $refund['status'],
+                'amount' => $refund['amount'],
+            ], $refunds),
+        ], 'responseCode' => 0]);
+    }
+
     /**
      * @param array<array-key, mixed> $data
      */
@@ -438,7 +491,7 @@ final class FakePrzelewy24
             'orderId' => (int) $transaction['orderId'],
             'sessionId' => $sessionId,
             'amount' => $amount,
-            'status' => 'pending',
+            'status' => self::REFUND_AWAITING_APPROVAL,
             'urlStatus' => self::str($data['urlStatus'] ?? ''),
             'description' => self::str($item['description'] ?? ''),
         ];
@@ -450,7 +503,7 @@ final class FakePrzelewy24
     {
         $total = 0;
         foreach ($this->refunds as $refund) {
-            if ($refund['sessionId'] === $sessionId && 'rejected' !== $refund['status']) {
+            if ($refund['sessionId'] === $sessionId && self::REFUND_REJECTED !== $refund['status']) {
                 $total += (int) $refund['amount'];
             }
         }

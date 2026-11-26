@@ -48,7 +48,16 @@ final class NotificationParserTest extends TestCase
     {
         $notification = self::parser()->parse(self::refundBody(Refund::NOTIFICATION_STATUS_REJECTED), self::credentials());
 
-        self::assertEquals(new Notification(Notification::TYPE_REFUND, 'order-1-abcdef012345', 3000000001, 1500, 'PLN', 'uuid1', Refund::STATUS_REJECTED), $notification);
+        self::assertEquals(new Notification(Notification::TYPE_REFUND, 'order-1-abcdef012345', 3000000001, 1500, 'PLN', 'uuid1', Refund::STATUS_REJECTED, 'request-1'), $notification);
+    }
+
+    public function test_refund_request_id_is_parsed(): void
+    {
+        self::assertSame('request-1', self::parser()->parse(self::refundBody(0), self::credentials())?->requestId);
+
+        $withoutRequestId = self::parser()->parse(self::refundBody(0, requestId: null), self::credentials());
+        self::assertInstanceOf(Notification::class, $withoutRequestId);
+        self::assertNull($withoutRequestId->requestId);
     }
 
     public function test_refund_notification_with_an_unknown_status_or_merchant_is_rejected(): void
@@ -115,7 +124,7 @@ final class NotificationParserTest extends TestCase
     /**
      * @param array<string, int|string> $overrides
      */
-    private static function refundBody(int $status, array $overrides = []): string
+    private static function refundBody(int $status, array $overrides = [], ?string $requestId = 'request-1'): string
     {
         $fields = $overrides + [
             'orderId' => 3000000001,
@@ -131,6 +140,6 @@ final class NotificationParserTest extends TestCase
             $ordered[$key] = $fields[$key];
         }
 
-        return json_encode($ordered + ['requestId' => 'request-1', 'timestamp' => 1767225600, 'sign' => FakePrzelewy24::sign($ordered)], JSON_THROW_ON_ERROR);
+        return json_encode($ordered + ['requestId' => $requestId, 'timestamp' => 1767225600, 'sign' => FakePrzelewy24::sign($ordered)], JSON_THROW_ON_ERROR);
     }
 }

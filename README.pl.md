@@ -246,10 +246,16 @@ ostrzeżenie. Dzięki temu zwroty tej płatności z Syliusa trafiają do Przelew
 
 Powiadomienia bez poprawnego `sign` albo innego sprzedawcy lub sklepu dostają HTTP 400 i nie są zapisywane.
 Powiadomienia o nieznanych transakcjach dostają HTTP 404. Gdy API Przelewy24 jest niedostępne albo odrzuca dane
-dostępowe pluginu (HTTP 401/403), endpoint odpowiada HTTP 5xx. Działa to tylko przy synchronicznym transporcie
-payment requestów (`sync://`, domyślnym w Syliusie): przy transporcie asynchronicznym endpoint odpowiada przed obsługą
-powiadomienia. Przelewy24 powtarza też powiadomienie (po 3, 5, 15, 30, 60, 150 i 450 minutach), dopóki transakcja nie
-zostanie zweryfikowana, więc płatność zakończy późniejsze powiadomienie, gdy API znów odpowie.
+dostępowe pluginu (HTTP 401/403) albo nie pokazuje jeszcze zgłoszonego zwrotu zleconego w Syliusie lub jego końcowego
+statusu, endpoint odpowiada HTTP 5xx. Działa to tylko przy synchronicznym transporcie payment requestów (`sync://`,
+domyślnym w Syliusie): przy transporcie asynchronicznym endpoint odpowiada HTTP 200 przed obsługą powiadomienia, więc
+Przelewy24 go nie ponawia. Messenger ponawia wtedy tylko te błędy (nie payment requesty oznaczone jako nieudane),
+zgodnie z `retry_strategy` transportu `payment_request`, a potem wysyła wiadomość do transportu błędów
+`payment_request_failed`. Ten transport to domyślnie `sync://`
+(`SYLIUS_MESSENGER_TRANSPORT_PAYMENT_REQUEST_FAILED_DSN`), który obsługuje wiadomość jeszcze raz zamiast ją zachować;
+ustaw trwały transport, żeby zachować nieudane wiadomości, i ponów je przez `messenger:failed:retry
+--transport=payment_request_failed`. Przelewy24 powtarza też powiadomienie (po 3, 5, 15, 30, 60, 150 i 450 minutach),
+dopóki transakcja nie zostanie zweryfikowana, więc płatność zakończy późniejsze powiadomienie, gdy API znów odpowie.
 
 ### Zwroty
 
@@ -258,6 +264,16 @@ pomniejszonej o wszystkie nieodrzucone zwroty (także zlecone w panelu Przelewy2
 zwrotu, a `refundsUuid` to samo ID bez myślników, więc ponownie dostarczone żądanie Przelewy24 odrzuca („Request already
 exists”) zamiast tworzyć drugi zwrot. Końcowy status zwrotu (wykonany lub odrzucony) przychodzi w powiadomieniu o zwrocie
 i jest zapisywany w szczegółach płatności.
+
+Po weryfikacji `sign` powiadomienia o zwrocie plugin odczytuje zwroty transakcji z API Przelewy24
+(`GET /api/v1/refund/by/orderId/{orderId}`) i bierze status oraz kwotę zwrotu o tym samym `requestId` stamtąd, a nie
+z treści powiadomienia. Payment request powiadomienia kończy się niepowodzeniem i nic się nie zmienia, gdy kwota,
+waluta albo końcowy status w API różnią się od podpisanego powiadomienia, gdy kwota różni się od zwrotu zleconego
+w Syliusie albo gdy API nie pokazuje zwrotu zleconego w panelu Przelewy24 dla tej transakcji w walucie płatności.
+Gdy API jeszcze nie pokazuje zwrotu zleconego w Syliusie albo pokazuje go jako oczekujący, endpoint odpowiada HTTP 5xx
+i niczego nie zmienia, więc powiadomienie zostanie ponowione. Zwroty, które API pokazuje bez `requestId`,
+znanego statusu albo kwoty, są pomijane (dwa ostatnie przypadki z ostrzeżeniem w logu) i liczą się jak niepokazane: pominięty zwrot zlecony
+w Syliusie jest ponawiany do wyczerpania prób, więc sprawdź ostrzeżenie w logu i zwrot w panelu Przelewy24.
 
 Gdy zwroty zlecone w panelu Przelewy24 pokrywają już całą płatność, plugin nie wywołuje Przelewy24 i kończy payment
 request zwrotu.
@@ -280,9 +296,17 @@ nie są oznaczane. Taka transakcja po opłaceniu niczego nie kończy (płatnoś�
 
 ### Zwroty zlecone w panelu Przelewy24
 
-Podpisane powiadomienie o zwrocie, którego Sylius nie zlecał, jest zapisywane w szczegółach płatności z flagą `external`.
+Podpisane powiadomienie o zwrocie, którego Sylius nie zlecał, jest zapisywane w szczegółach płatności z flagą `external`,
+chyba że jego kwota odczytana z API Przelewy24 przekracza kwotę płatności albo jego `requestId` jest już zapisany
+(`sign` nie obejmuje `requestId`).
 Gdy wykonane zwroty pokryją całą kwotę płatności, płatność przechodzi w stan `refunded` bez wysyłania kolejnego zwrotu
 do Przelewy24. Częściowe zwroty widać tylko w szczegółach płatności, bo Sylius nie ma dla nich stanu.
+
+Przelewy24 nie podpisuje `requestId`, więc plugin nie rozróżnia zwrotów z panelu tej samej transakcji o tej samej
+kwocie, walucie i statusie. Przechwycone podpisane powiadomienie wysłane ponownie z innym `requestId` może co najwyżej
+sprawić, że jakiś zwrot nie zostanie zapisany (zapisane zwroty są wtedy niższe niż w Przelewy24). Nigdy nie zapisuje
+zwrotu dwa razy, nie zapisuje więcej, niż pokazuje Przelewy24, i nie przejmuje zwrotu zleconego w Syliusie, którego
+`requestId` jest brany ze szczegółów płatności.
 
 ## Założenia niepotwierdzone jeszcze w sandboxie Przelewy24
 
@@ -295,6 +319,9 @@ Poniższe punkty nie wynikają z niej wprost i są pokryte tylko testami na atra
   sprawdzania statusu traktowane tak samo.
 - Przelewy24 nie wymaga konkretnego kodu HTTP w odpowiedzi na powiadomienie; ponawia powiadomienia do czasu weryfikacji.
 - Zwroty zlecone w panelu Przelewy24 są zgłaszane na domyślny adres powiadomień o zwrotach, jeśli jest ustawiony.
+- Powiadomienia o zwrotach i lista `refund/by/orderId` zawierają `requestId` zwrotów zleconych w panelu Przelewy24.
+  Zwrot z panelu bez `requestId` albo nieobecny w API nie jest zapisywany.
+- Przelewy24 ponawia powiadomienie o zwrocie, na które endpoint odpowiedział HTTP 5xx.
 - Transakcję zarejestrowaną przed zmianą metody płatności w Syliusie nadal można opłacić.
 
 ## Bezpieczeństwo

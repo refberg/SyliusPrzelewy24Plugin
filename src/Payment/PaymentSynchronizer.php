@@ -6,6 +6,7 @@ namespace Refberg\SyliusPrzelewy24Plugin\Payment;
 
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Api\Przelewy24ClientInterface;
 use Refberg\SyliusPrzelewy24Plugin\Config\Przelewy24Credentials;
@@ -50,5 +51,16 @@ final readonly class PaymentSynchronizer implements PaymentSynchronizerInterface
         }
 
         return $this->stateApplier->apply($payment, $transaction);
+    }
+
+    public function retrieveRefund(PaymentInterface $payment, int $orderId, string $requestId, Przelewy24Credentials $credentials): ?RefundListed
+    {
+        foreach ($this->client->getRefunds($credentials, $orderId) as $refund) {
+            if ($refund->requestId === $requestId && $refund->currency === $payment->getCurrencyCode()) {
+                return $refund;
+            }
+        }
+
+        return null;
     }
 }
