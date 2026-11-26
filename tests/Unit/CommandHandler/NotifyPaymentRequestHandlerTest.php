@@ -248,6 +248,35 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
         self::assertSame([], PaymentDetails::of($payment)->refunds());
     }
 
+    public function test_notification_with_an_invalid_sign_fails_without_changes(): void
+    {
+        $synchronizer = $this->createMock(PaymentSynchronizerInterface::class);
+        $synchronizer->expects(self::never())->method('synchronize');
+        $logger = new MemoryLogger();
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, null, logger: $logger);
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_FAILED, $paymentRequest->getState());
+        self::assertSame(['error' => 'Invalid notification sign or body.'], $paymentRequest->getResponseData());
+        self::assertSame(PaymentInterface::STATE_COMPLETED, $payment->getState());
+        self::assertSame(['warning'], array_column($logger->records, 'level'));
+    }
+
+    public function test_transaction_not_linked_to_the_payment_fails_without_changes(): void
+    {
+        $synchronizer = $this->createMock(PaymentSynchronizerInterface::class);
+        $synchronizer->expects(self::never())->method('synchronize');
+        $notification = new Notification(Notification::TYPE_TRANSACTION, 's-3', 1003, 1500, 'PLN');
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, $notification);
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_FAILED, $paymentRequest->getState());
+        self::assertSame(['error' => 'Przelewy24 transaction is not linked to this payment.'], $paymentRequest->getResponseData());
+        self::assertSame(PaymentInterface::STATE_COMPLETED, $payment->getState());
+    }
+
     public function test_refund_notification_without_a_request_id_fails_without_api_calls(): void
     {
         $synchronizer = $this->createMock(PaymentSynchronizerInterface::class);
@@ -379,7 +408,7 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
      */
     private function refundHandler(
         PaymentSynchronizerInterface $synchronizer,
-        Notification $notification,
+        ?Notification $notification,
         ?PaymentMethod $method = null,
         ?Payment $payment = null,
         PaymentStateMachine $stateMachine = new PaymentStateMachine(),
