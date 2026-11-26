@@ -278,7 +278,8 @@ amount, currency or final status in the API differs from the signed notification
 refund requested by Sylius, or when the API does not list a refund made in the Przelewy24 panel for the transaction in
 the payment currency. When the API does not list a refund requested by Sylius yet, or still shows it as pending, the
 endpoint answers with HTTP 5xx and changes nothing, so the notification is retried. Refunds that the API lists without
-`requestId`, a known status or an amount are skipped (the last two with a warning in the log).
+`requestId`, a known status or an amount are skipped (the last two with a warning in the log) and count as not listed: a skipped refund requested by Sylius
+is retried until the retries run out, so check the log for the warning and the refund in the Przelewy24 panel.
 
 When refunds made in the Przelewy24 panel already cover the whole payment, the plugin does not call Przelewy24 and
 completes the refund payment request.

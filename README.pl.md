@@ -272,7 +272,8 @@ waluta albo końcowy status w API różnią się od podpisanego powiadomienia, g
 w Syliusie albo gdy API nie pokazuje zwrotu zleconego w panelu Przelewy24 dla tej transakcji w walucie płatności.
 Gdy API jeszcze nie pokazuje zwrotu zleconego w Syliusie albo pokazuje go jako oczekujący, endpoint odpowiada HTTP 5xx
 i niczego nie zmienia, więc powiadomienie zostanie ponowione. Zwroty, które API pokazuje bez `requestId`,
-znanego statusu albo kwoty, są pomijane (dwa ostatnie przypadki z ostrzeżeniem w logu).
+znanego statusu albo kwoty, są pomijane (dwa ostatnie przypadki z ostrzeżeniem w logu) i liczą się jak niepokazane: pominięty zwrot zlecony
+w Syliusie jest ponawiany do wyczerpania prób, więc sprawdź ostrzeżenie w logu i zwrot w panelu Przelewy24.
 
 Gdy zwroty zlecone w panelu Przelewy24 pokrywają już całą płatność, plugin nie wywołuje Przelewy24 i kończy payment
 request zwrotu.
