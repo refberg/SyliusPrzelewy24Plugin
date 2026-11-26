@@ -6,6 +6,7 @@ namespace Tests\Refberg\SyliusPrzelewy24Plugin\Unit\CommandHandler;
 
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
+use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24ApiException;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Command\StatusPaymentRequest;
 use Refberg\SyliusPrzelewy24Plugin\CommandHandler\StatusPaymentRequestHandler;
@@ -24,6 +25,7 @@ use Sylius\Component\Payment\Model\PaymentRequest;
 use Sylius\Component\Payment\Model\PaymentRequestInterface;
 use Sylius\Component\Payment\Repository\PaymentRequestRepositoryInterface;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
+use Tests\Refberg\SyliusPrzelewy24Plugin\Support\MemoryLogger;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\PaymentStateMachine;
 use function array_filter;
 use function array_values;
@@ -73,15 +75,59 @@ final class StatusPaymentRequestHandlerTest extends TestCase
         self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $statusRequest->getState());
     }
 
+    public function test_not_found_transaction_is_skipped_and_the_next_one_checked(): void
+    {
+        $method = self::p24Method();
+        $payment = self::payment($method, ['s-1', 's-2']);
+        $capture = self::request($payment, $method, PaymentRequestInterface::ACTION_CAPTURE, PaymentRequestInterface::STATE_PROCESSING, 's-1');
+        $statusRequest = self::request($payment, $method, PaymentRequestInterface::ACTION_STATUS, PaymentRequestInterface::STATE_NEW, null);
+        $checked = [];
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('synchronize')->willReturnCallback(static function (PaymentInterface $synchronized, string $sessionId) use (&$checked): string {
+            $checked[] = $sessionId;
+            if ('s-2' === $sessionId) {
+                throw new Przelewy24ApiException('Transaction not found (HTTP 404).', 404);
+            }
+            $details = PaymentDetails::of($synchronized);
+            $details->recordTransaction(new Transaction($sessionId, 1001, Transaction::STATUS_PAYMENT_MADE, 1500, 'PLN'));
+            $details->save();
+
+            return PaymentStateApplierInterface::RESULT_UNCHANGED;
+        });
+
+        $this->invoke($statusRequest, [$capture, $statusRequest], $synchronizer);
+
+        self::assertSame(['s-2', 's-1'], $checked);
+        self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $capture->getState());
+        self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $statusRequest->getState());
+    }
+
+    public function test_other_api_error_fails_the_request(): void
+    {
+        $method = self::p24Method();
+        $payment = self::payment($method, ['s-1']);
+        $capture = self::request($payment, $method, PaymentRequestInterface::ACTION_CAPTURE, PaymentRequestInterface::STATE_PROCESSING, 's-1');
+        $statusRequest = self::request($payment, $method, PaymentRequestInterface::ACTION_STATUS, PaymentRequestInterface::STATE_NEW, null);
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('synchronize')->willThrowException(new Przelewy24ApiException('Verifying transaction failed (HTTP 503).', 503));
+        $logger = new MemoryLogger();
+
+        $this->invoke($statusRequest, [$capture, $statusRequest], $synchronizer, $logger);
+
+        self::assertSame(PaymentRequestInterface::STATE_FAILED, $statusRequest->getState());
+        self::assertSame(['error' => 'Verifying transaction failed (HTTP 503).'], $statusRequest->getResponseData());
+        self::assertSame(PaymentInterface::STATE_NEW, $payment->getState());
+        self::assertSame(PaymentRequestInterface::STATE_PROCESSING, $capture->getState());
+        self::assertSame('warning', $logger->records[0]['level'] ?? null);
+        self::assertSame(['payment_id' => 42, 'reason' => 'Verifying transaction failed (HTTP 503).'], $logger->records[0]['context']);
+    }
+
     /**
      * @param list<PaymentRequestInterface> $requests
      * @param array<string, int> $p24Statuses
      */
     private function handle(PaymentRequestInterface $statusRequest, array $requests, array $p24Statuses): void
     {
-        $paymentRequestProvider = self::createStub(PaymentRequestProviderInterface::class);
-        $paymentRequestProvider->method('provide')->willReturn($statusRequest);
-
         $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
         $synchronizer->method('synchronize')->willReturnCallback(static function (PaymentInterface $synchronized, string $sessionId) use ($p24Statuses): string {
             $details = PaymentDetails::of($synchronized);
@@ -90,6 +136,17 @@ final class StatusPaymentRequestHandlerTest extends TestCase
 
             return PaymentStateApplierInterface::RESULT_UNCHANGED;
         });
+
+        $this->invoke($statusRequest, $requests, $synchronizer);
+    }
+
+    /**
+     * @param list<PaymentRequestInterface> $requests
+     */
+    private function invoke(PaymentRequestInterface $statusRequest, array $requests, PaymentSynchronizerInterface $synchronizer, MemoryLogger $logger = new MemoryLogger()): void
+    {
+        $paymentRequestProvider = self::createStub(PaymentRequestProviderInterface::class);
+        $paymentRequestProvider->method('provide')->willReturn($statusRequest);
 
         $paymentRequestRepository = self::createStub(PaymentRequestRepositoryInterface::class);
         $paymentRequestRepository->method('findByPaymentIdAndStates')->willReturnCallback(
@@ -102,7 +159,8 @@ final class StatusPaymentRequestHandlerTest extends TestCase
             $synchronizer,
             self::createStub(PaymentLockerInterface::class),
             new PaymentStateMachine(),
-            paymentRequestRepository: $paymentRequestRepository,
+            $logger,
+            $paymentRequestRepository,
         );
 
         $handler(new StatusPaymentRequest('3f2504e0-4f89-11d3-9a0c-0305e82c3301'));
