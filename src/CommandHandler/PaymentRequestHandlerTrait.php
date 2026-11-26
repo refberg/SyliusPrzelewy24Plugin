@@ -6,12 +6,16 @@ namespace Refberg\SyliusPrzelewy24Plugin\CommandHandler;
 
 use LogicException;
 use Psr\Log\LoggerInterface;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Payment\PaymentDetails;
 use Sylius\Abstraction\StateMachine\StateMachineInterface;
 use Sylius\Component\Core\Model\PaymentInterface;
 use Sylius\Component\Payment\Model\PaymentMethodInterface;
 use Sylius\Component\Payment\Model\PaymentRequestInterface;
 use Sylius\Component\Payment\PaymentRequestTransitions;
+use Sylius\Component\Payment\Repository\PaymentRequestRepositoryInterface;
+use function in_array;
+use function is_string;
 
 /**
  * @internal
@@ -40,6 +44,35 @@ trait PaymentRequestHandlerTrait
     {
         if ($this->stateMachine->can($paymentRequest, PaymentRequestTransitions::GRAPH, $transition)) {
             $this->stateMachine->apply($paymentRequest, PaymentRequestTransitions::GRAPH, $transition);
+        }
+    }
+
+    /**
+     * Sylius reuses a capture request that is not final, so a paid transaction would send the customer back to its payment page.
+     *
+     * @param PaymentRequestRepositoryInterface<PaymentRequestInterface>|null $paymentRequestRepository
+     * @param string|null $sessionId null closes the capture requests of every paid transaction
+     */
+    private function closeCaptureRequests(?PaymentRequestRepositoryInterface $paymentRequestRepository, PaymentInterface $payment, ?string $sessionId = null): void
+    {
+        if (!$paymentRequestRepository instanceof PaymentRequestRepositoryInterface) {
+            return;
+        }
+
+        $details = PaymentDetails::of($payment);
+        foreach ($paymentRequestRepository->findByPaymentIdAndStates($payment->getId(), [PaymentRequestInterface::STATE_PROCESSING]) as $captureRequest) {
+            $captureSessionId = $captureRequest->getResponseData()['session_id'] ?? null;
+            if (
+                !is_string($captureSessionId) ||
+                (null !== $sessionId && $sessionId !== $captureSessionId) ||
+                !in_array($captureRequest->getAction(), [PaymentRequestInterface::ACTION_CAPTURE, PaymentRequestInterface::ACTION_AUTHORIZE], true)
+            ) {
+                continue;
+            }
+
+            if (Transaction::isPaidStatus($details->getTransactionStatus($captureSessionId))) {
+                $this->transitionRequest($captureRequest, PaymentRequestTransitions::TRANSITION_COMPLETE);
+            }
         }
     }
 

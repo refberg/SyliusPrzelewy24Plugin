@@ -438,6 +438,44 @@ final class ShopPaymentFlowTest extends IntegrationTestCase
         self::assertSame([], $this->p24->requests('PUT'));
     }
 
+    #[TestWith(['notification'])]
+    #[TestWith(['return'])]
+    public function test_capture_request_is_completed_when_the_transaction_is_paid(string $confirmedBy): void
+    {
+        $this->createPlacedOrder();
+        $this->payInShop();
+        $sessionId = $this->p24->lastSessionId();
+        $this->p24->pay($sessionId);
+
+        if ('notification' === $confirmedBy) {
+            self::assertSame(Response::HTTP_OK, $this->notifyTransaction($sessionId)->getStatusCode());
+        } else {
+            self::assertTrue($this->returnFromPrzelewy24($sessionId)->isRedirect());
+        }
+
+        $captures = $this->paymentRequests(PaymentRequestInterface::ACTION_CAPTURE);
+        self::assertCount(1, $captures);
+        self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $captures[0]->getState());
+        self::assertSame($sessionId, $captures[0]->getResponseData()['session_id'] ?? null);
+    }
+
+    public function test_capture_request_is_completed_when_a_transaction_is_paid_after_the_payment_was_cancelled(): void
+    {
+        $payment = $this->createPlacedOrder();
+        $this->payInShop();
+        $sessionId = $this->p24->lastSessionId();
+        $payment = $this->reloadPayment($payment);
+        $payment->setState(PaymentInterface::STATE_CANCELLED);
+        $this->em()->flush();
+
+        $this->p24->pay($sessionId);
+        self::assertSame(Response::HTTP_OK, $this->notifyTransaction($sessionId)->getStatusCode());
+
+        self::assertSame([['type' => PaymentDetails::WARNING_LATE_PAYMENT, 'session_id' => $sessionId]], $this->details($payment)->warnings());
+        self::assertSame(Transaction::STATUS_ADVANCE_PAYMENT, $this->details($payment)->getTransactionStatus($sessionId));
+        self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $this->paymentRequests(PaymentRequestInterface::ACTION_CAPTURE)[0]->getState());
+    }
+
     private function switchToBankTransfer(PaymentInterface $payment): PaymentInterface
     {
         $bankTransfer = $this->factory('payment_method')->createNew();

@@ -37,11 +37,11 @@ from Sylius.
 
 | Sylius  | PHP     | Symfony                            |
 |---------|---------|------------------------------------|
-| 2.2.12+ | 8.2–8.4 | 6.4, 7.4                           |
-| 2.3.2+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x needs PHP 8.4+) |
+| 2.2.13+ | 8.2–8.4 | 6.4, 7.4                           |
+| 2.3.3+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x needs PHP 8.4+) |
 
-Sylius 2.2.12 and 2.3.2 are the first versions with the security fixes of the payment request API
-(`UPGRADE-API-2.2.md`, `UPGRADE-API-2.3.md`).
+Sylius 2.2.13 and 2.3.3 are the first versions with the fixes for the Sylius security advisories of 2026-11-18;
+Composer refuses to install older versions.
 
 The Sylius shop (`SyliusShopBundle`) and admin panel (`SyliusAdminBundle`, `SyliusTwigHooksBundle`) are optional,
 so the plugin also works in API-only applications.
@@ -193,6 +193,7 @@ $paymentMethodRepository->add($paymentMethod);
    one changes nothing.
 
 Opening the pay page again reuses the transaction that is still waiting for the payment.
+Once the notification or the status check finds that transaction paid, its capture payment request is completed.
 Przelewy24 reports only paid transactions, so a payment is never marked as failed by the plugin; the customer can pay
 again from the order page.
 
@@ -238,7 +239,7 @@ status (`0` no payment, `1` paid and not verified, `2` paid and verified, `3` re
 
 A payment that is completed is never moved back. If a second transaction of the same payment is paid (for example
 after the customer retried in another tab), the plugin does not verify it, so Przelewy24 does not settle it. The plugin
-records a `duplicate_payment` warning in the payment details (`refberg_przelewy24.warnings`) and logs an error on the
+records a `duplicate_payment` warning in the payment details (`refberg_przelewy24.warnings`) and logs a critical message on the
 `przelewy24` channel. Check the transaction in the Przelewy24 panel; an unverified payment stays at the customer's
 disposal as an advance payment.
 

@@ -70,7 +70,7 @@ final class PaymentStateApplierTest extends TestCase
         $details = PaymentDetails::of($payment);
         self::assertSame('s-1', $details->getCompletedSessionId());
         self::assertSame([['type' => PaymentDetails::WARNING_DUPLICATE_PAYMENT, 'session_id' => 's-2']], $details->warnings());
-        self::assertSame('error', $this->logger->records[1]['level'] ?? null);
+        self::assertSame('critical', $this->logger->records[1]['level'] ?? null);
     }
 
     public function test_payment_that_cannot_be_completed_gets_a_late_payment_warning(): void

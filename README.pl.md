@@ -35,11 +35,11 @@ Poza zakresem: BLIK i karty osadzone w sklepie, płatności one-click, raty, cz�
 
 | Sylius  | PHP     | Symfony                                 |
 |---------|---------|-----------------------------------------|
-| 2.2.12+ | 8.2–8.4 | 6.4, 7.4                                |
-| 2.3.2+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x wymaga PHP 8.4+)     |
+| 2.2.13+ | 8.2–8.4 | 6.4, 7.4                                |
+| 2.3.3+  | 8.3–8.5 | 6.4, 7.4, 8.x (8.x wymaga PHP 8.4+)     |
 
-Sylius 2.2.12 i 2.3.2 to pierwsze wersje z poprawkami bezpieczeństwa API payment requestów
-(`UPGRADE-API-2.2.md`, `UPGRADE-API-2.3.md`).
+Sylius 2.2.13 i 2.3.3 to pierwsze wersje z poprawkami do advisories bezpieczeństwa Syliusa z 2026-11-18;
+Composer nie instaluje starszych wersji.
 
 Sklep (`SyliusShopBundle`) i panel administracyjny (`SyliusAdminBundle`, `SyliusTwigHooksBundle`) są opcjonalne,
 więc plugin działa też w aplikacjach udostępniających tylko API.
@@ -189,6 +189,7 @@ $paymentMethodRepository->add($paymentMethod);
    i kończy płatność. Pracę wykonuje to, co przyjdzie pierwsze (powrót lub powiadomienie); drugie niczego nie zmienia.
 
 Ponowne otwarcie strony płatności używa transakcji, która nadal czeka na wpłatę.
+Gdy powiadomienie lub sprawdzenie statusu stwierdzi, że ta transakcja jest opłacona, jej payment request capture zostaje zakończony.
 Przelewy24 informuje tylko o opłaconych transakcjach, więc plugin nigdy nie oznacza płatności jako nieudanej;
 klient może zapłacić ponownie ze strony zamówienia.
 
@@ -234,7 +235,7 @@ Content-Type: application/ld+json
 
 Zakończona płatność nigdy nie wraca do wcześniejszego stanu. Gdy klient opłaci drugą transakcję tej samej płatności
 (np. ponowił płatność w innej karcie), plugin jej nie weryfikuje, więc Przelewy24 jej nie rozlicza. Plugin zapisuje
-ostrzeżenie `duplicate_payment` w szczegółach płatności (`refberg_przelewy24.warnings`) i loguje błąd na kanale
+ostrzeżenie `duplicate_payment` w szczegółach płatności (`refberg_przelewy24.warnings`) i loguje komunikat krytyczny na kanale
 `przelewy24`. Sprawdź transakcję w panelu Przelewy24; niezweryfikowana wpłata zostaje do dyspozycji klienta jako zaliczka.
 
 Jeśli klient po przekierowaniu do Przelewy24 zmieni metodę płatności zamówienia, wcześniej zarejestrowana transakcja

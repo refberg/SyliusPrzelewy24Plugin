@@ -17,6 +17,8 @@ use Refberg\SyliusPrzelewy24Plugin\Payment\PaymentStateApplierInterface;
 use Refberg\SyliusPrzelewy24Plugin\Payment\PaymentSynchronizerInterface;
 use Sylius\Abstraction\StateMachine\StateMachineInterface;
 use Sylius\Bundle\PaymentBundle\Provider\PaymentRequestProviderInterface;
+use Sylius\Component\Payment\Model\PaymentRequestInterface;
+use Sylius\Component\Payment\Repository\PaymentRequestRepositoryInterface;
 use function array_slice;
 
 /**
@@ -34,6 +36,9 @@ final readonly class StatusPaymentRequestHandler
     /** Only the newest open transactions are checked, so a payment with many attempts stays fast. */
     private const MAX_CHECKED_TRANSACTIONS = 3;
 
+    /**
+     * @param PaymentRequestRepositoryInterface<PaymentRequestInterface>|null $paymentRequestRepository
+     */
     public function __construct(
         private PaymentRequestProviderInterface $paymentRequestProvider,
         private CredentialsResolverInterface $credentialsResolver,
@@ -41,6 +46,7 @@ final readonly class StatusPaymentRequestHandler
         private PaymentLockerInterface $paymentLocker,
         private StateMachineInterface $stateMachine,
         private LoggerInterface $logger = new NullLogger(),
+        private ?PaymentRequestRepositoryInterface $paymentRequestRepository = null,
     ) {
     }
 
@@ -71,6 +77,7 @@ final readonly class StatusPaymentRequestHandler
                     $this->restorePaidMethod($payment, $method, $sessionId);
                 }
             }
+            $this->closeCaptureRequests($this->paymentRequestRepository, $payment);
         } catch (Przelewy24Exception|InvalidConfigurationException $exception) {
             $this->logger->warning('Could not check Przelewy24 transaction status.', [
                 'payment_id' => $payment->getId(),
