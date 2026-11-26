@@ -271,7 +271,8 @@ z treści powiadomienia. Payment request powiadomienia kończy się niepowodzeni
 waluta albo końcowy status w API różnią się od podpisanego powiadomienia, gdy kwota różni się od zwrotu zleconego
 w Syliusie albo gdy API nie pokazuje zwrotu zleconego w panelu Przelewy24 dla tej transakcji w walucie płatności.
 Gdy API jeszcze nie pokazuje zwrotu zleconego w Syliusie albo pokazuje go jako oczekujący, endpoint odpowiada HTTP 5xx
-i niczego nie zmienia, więc powiadomienie zostanie ponowione. Zwroty, które API pokazuje bez `requestId`, są pomijane.
+i niczego nie zmienia, więc powiadomienie zostanie ponowione. Zwroty, które API pokazuje bez `requestId`,
+znanego statusu albo kwoty, są pomijane (dwa ostatnie przypadki z ostrzeżeniem w logu).
 
 Gdy zwroty zlecone w panelu Przelewy24 pokrywają już całą płatność, plugin nie wywołuje Przelewy24 i kończy payment
 request zwrotu.
@@ -299,6 +300,12 @@ chyba że jego kwota odczytana z API Przelewy24 przekracza kwotę płatności al
 (`sign` nie obejmuje `requestId`).
 Gdy wykonane zwroty pokryją całą kwotę płatności, płatność przechodzi w stan `refunded` bez wysyłania kolejnego zwrotu
 do Przelewy24. Częściowe zwroty widać tylko w szczegółach płatności, bo Sylius nie ma dla nich stanu.
+
+Przelewy24 nie podpisuje `requestId`, więc plugin nie rozróżnia zwrotów z panelu tej samej transakcji o tej samej
+kwocie, walucie i statusie. Przechwycone podpisane powiadomienie wysłane ponownie z innym `requestId` może co najwyżej
+sprawić, że jakiś zwrot nie zostanie zapisany (zapisane zwroty są wtedy niższe niż w Przelewy24). Nigdy nie zapisuje
+zwrotu dwa razy, nie zapisuje więcej, niż pokazuje Przelewy24, i nie przejmuje zwrotu zleconego w Syliusie, którego
+`requestId` jest brany ze szczegółów płatności.
 
 ## Założenia niepotwierdzone jeszcze w sandboxie Przelewy24
 

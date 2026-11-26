@@ -266,6 +266,7 @@ final readonly class NotifyPaymentRequestHandler
             $refund->amount <= 0 ||
             $refund->amount > (int) $payment->getAmount() ||
             // requestId is not signed: without this check one listed refund could be recorded under several refundsUuid.
+            // Identical panel refunds stay indistinguishable, so a swapped requestId can only leave one unrecorded.
             $details->hasRefundWithRequestId($refund->requestId)
         ) {
             $this->logger->warning('Ignored Przelewy24 refund notification that does not match the paid transaction.', [

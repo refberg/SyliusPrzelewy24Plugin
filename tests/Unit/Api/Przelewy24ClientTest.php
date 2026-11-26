@@ -7,6 +7,8 @@ namespace Tests\Refberg\SyliusPrzelewy24Plugin\Unit\Api;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24ApiException;
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24TransportException;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Refund;
@@ -22,6 +24,10 @@ use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\MemoryLogger;
+use function array_column;
+use function array_map;
+use function array_unique;
+use function array_values;
 use function json_decode;
 use function json_encode;
 use function sprintf;
@@ -235,6 +241,24 @@ final class Przelewy24ClientTest extends TestCase
         self::assertEquals([new RefundListed('r-1', Refund::STATUS_COMPLETED, 100, 'PLN')], $client->getRefunds(self::credentials(), 3000000001));
     }
 
+    public function test_refunds_with_an_unknown_status_or_without_an_amount_are_skipped_with_a_warning(): void
+    {
+        $client = self::clientAnswering(200, ['data' => [
+            'orderId' => 3000000001, 'currency' => 'PLN',
+            'refunds' => [
+                ['requestId' => 'r-1', 'status' => 5, 'amount' => 100],
+                ['requestId' => 'r-2', 'amount' => 100],
+                ['requestId' => 'r-3', 'status' => 1, 'amount' => '1.00'],
+                ['requestId' => 'r-4', 'status' => 4, 'amount' => 400],
+            ],
+        ]], $this->logger);
+
+        self::assertEquals([new RefundListed('r-4', Refund::STATUS_REJECTED, 400, 'PLN')], $client->getRefunds(self::credentials(), 3000000001));
+        self::assertSame(['r-1', 'r-2', 'r-3'], array_map(static fn (array $record): mixed => $record['context']['request_id'] ?? null, $this->logger->records));
+        self::assertSame(['warning'], array_values(array_unique(array_column($this->logger->records, 'level'))));
+        self::assertSame(3000000001, $this->logger->records[0]['context']['p24_order_id'] ?? null);
+    }
+
     public function test_refunds_of_another_transaction_fail(): void
     {
         $client = self::clientAnswering(200, ['data' => [
@@ -252,15 +276,11 @@ final class Przelewy24ClientTest extends TestCase
      */
     public static function incompleteRefundLists(): iterable
     {
-        $refund = ['requestId' => 'r-1', 'status' => 1, 'amount' => 100];
-        $list = ['orderId' => 3000000001, 'currency' => 'PLN', 'refunds' => [$refund]];
+        $list = ['orderId' => 3000000001, 'currency' => 'PLN', 'refunds' => [['requestId' => 'r-1', 'status' => 1, 'amount' => 100]]];
 
         yield 'no data' => [[]];
         yield 'no currency' => [['currency' => null] + $list];
         yield 'no refund list' => [['refunds' => null] + $list];
-        yield 'refund without status' => [['refunds' => [['status' => null] + $refund]] + $list];
-        yield 'refund with an unknown status' => [['refunds' => [['status' => 5] + $refund]] + $list];
-        yield 'refund without amount' => [['refunds' => [['amount' => null] + $refund]] + $list];
     }
 
     /**
@@ -349,9 +369,9 @@ final class Przelewy24ClientTest extends TestCase
     /**
      * @param array<string, mixed> $body
      */
-    private static function clientAnswering(int $httpStatus, array $body): Przelewy24Client
+    private static function clientAnswering(int $httpStatus, array $body, LoggerInterface $logger = new NullLogger()): Przelewy24Client
     {
-        return new Przelewy24Client(new MockHttpClient(new MockResponse((string) json_encode($body), ['http_code' => $httpStatus])), new SignatureVerifier());
+        return new Przelewy24Client(new MockHttpClient(new MockResponse((string) json_encode($body), ['http_code' => $httpStatus])), new SignatureVerifier(), $logger);
     }
 
     private static function credentials(Environment $environment = Environment::Sandbox): Przelewy24Credentials

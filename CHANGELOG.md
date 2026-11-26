@@ -19,7 +19,8 @@ and removed in 2.0.
   amount differs from the requested one) is not recorded. A refund made in the Przelewy24 panel that the API does not
   list for the transaction in the payment currency, without `requestId`, or larger than the payment, is not recorded
   either. When the API does not list a refund requested by Sylius or does not show the notified final status yet, the
-  notification is retried and nothing changes. Refunds listed without `requestId` are skipped.
+  notification is retried and nothing changes. Refunds listed without `requestId`, a known status or an amount are
+  skipped.
 - The capture payment request is completed when the notification or the status check finds its transaction paid
   (verified or not); the status check also completes capture requests left processing for transactions that were
   already paid.

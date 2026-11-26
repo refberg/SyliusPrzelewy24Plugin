@@ -185,7 +185,9 @@ final readonly class Przelewy24Client implements Przelewy24ClientInterface
             $status = null !== $status ? Refund::fromApiStatus($status) : null;
             $amount = Json::int($item, 'amount');
             if (null === $status || !is_int($amount)) {
-                throw new Przelewy24ApiException('Przelewy24 refund list response is incomplete.', $statusCode);
+                $this->logger->warning('Skipped a Przelewy24 refund listed without a known status or an amount.', ['p24_order_id' => $orderId, 'request_id' => $requestId]);
+
+                continue;
             }
 
             $refunds[] = new RefundListed($requestId, $status, $amount, $currency);

@@ -278,7 +278,7 @@ amount, currency or final status in the API differs from the signed notification
 refund requested by Sylius, or when the API does not list a refund made in the Przelewy24 panel for the transaction in
 the payment currency. When the API does not list a refund requested by Sylius yet, or still shows it as pending, the
 endpoint answers with HTTP 5xx and changes nothing, so the notification is retried. Refunds that the API lists without
-`requestId` are skipped.
+`requestId`, a known status or an amount are skipped (the last two with a warning in the log).
 
 When refunds made in the Przelewy24 panel already cover the whole payment, the plugin does not call Przelewy24 and
 completes the refund payment request.
@@ -307,6 +307,12 @@ A signed refund notification for a refund that Sylius did not request is recorde
 recorded (`requestId` is not covered by the `sign`). When completed refunds cover the whole payment amount, the payment
 is moved to `refunded` without sending another refund to Przelewy24. Partial refunds only show up in the payment
 details, because Sylius has no state for them.
+
+Because Przelewy24 does not sign `requestId`, the plugin cannot tell apart panel refunds of the same transaction with
+the same amount, currency and status. An intercepted signed notification resent with another `requestId` can at most leave
+a refund unrecorded (the recorded refunds are then lower than in Przelewy24). It never records a refund twice, never
+records more than Przelewy24 lists, and never takes over a refund requested by Sylius, whose `requestId` is read from
+the payment details.
 
 ## Assumptions not yet confirmed in the Przelewy24 sandbox
 
