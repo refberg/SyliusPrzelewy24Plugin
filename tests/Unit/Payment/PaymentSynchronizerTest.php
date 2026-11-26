@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Tests\Refberg\SyliusPrzelewy24Plugin\Unit\Payment;
 
 use PHPUnit\Framework\TestCase;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\Refund;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundRequest;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Api\Przelewy24Client;
 use Refberg\SyliusPrzelewy24Plugin\Config\Environment;
@@ -68,6 +71,39 @@ final class PaymentSynchronizerTest extends TestCase
         self::assertSame([], $this->p24->requests('PUT'));
         self::assertSame(PaymentInterface::STATE_NEW, $payment->getState());
         self::assertSame(Transaction::STATUS_NO_PAYMENT, PaymentDetails::of($payment)->getTransactionStatus('s-1'));
+    }
+
+    public function test_listed_refund_is_returned(): void
+    {
+        $payment = $this->registeredPayment('s-1');
+        $orderId = $this->refundedTransaction('s-1');
+
+        self::assertEquals(
+            new RefundListed('request-2', Refund::STATUS_PENDING, 700, 'PLN'),
+            $this->synchronizer()->retrieveRefund($payment, $orderId, 'request-2', self::credentials()),
+        );
+    }
+
+    public function test_refund_missing_or_in_another_currency_is_null(): void
+    {
+        $payment = $this->registeredPayment('s-1');
+        $orderId = $this->refundedTransaction('s-1');
+
+        self::assertNull($this->synchronizer()->retrieveRefund($payment, $orderId, 'request-3', self::credentials()));
+
+        $payment->setCurrencyCode('EUR');
+        self::assertNull($this->synchronizer()->retrieveRefund($payment, $orderId, 'request-1', self::credentials()));
+    }
+
+    private function refundedTransaction(string $sessionId): int
+    {
+        $orderId = $this->p24->pay($sessionId);
+        $this->p24->setStatus($sessionId, Transaction::STATUS_PAYMENT_MADE);
+        foreach (['request-1' => 500, 'request-2' => 700] as $requestId => $amount) {
+            $this->client->refund(self::credentials(), new RefundRequest($requestId, 'uuid-' . $requestId, $orderId, $sessionId, $amount, 'Refund', 'https://shop.example/payment-methods/P24'));
+        }
+
+        return $orderId;
     }
 
     private function synchronizer(): PaymentSynchronizer

@@ -93,14 +93,14 @@ final readonly class NotificationParser implements NotificationParserInterface
             return null;
         }
 
-        return self::notification(Notification::TYPE_REFUND, $data, $refundsUuid, $refundStatus);
+        return self::notification(Notification::TYPE_REFUND, $data, $refundsUuid, $refundStatus, Json::string($data, 'requestId'));
     }
 
     /**
      * @param Notification::TYPE_* $type
      * @param array<array-key, mixed> $data
      */
-    private static function notification(string $type, array $data, ?string $refundsUuid = null, ?string $refundStatus = null): ?Notification
+    private static function notification(string $type, array $data, ?string $refundsUuid = null, ?string $refundStatus = null, ?string $requestId = null): ?Notification
     {
         $sessionId = Json::string($data, 'sessionId');
         $orderId = Json::int($data, 'orderId');
@@ -114,6 +114,6 @@ final readonly class NotificationParser implements NotificationParserInterface
             return null;
         }
 
-        return new Notification($type, $sessionId, $orderId, $amount, $currency, $refundsUuid, $refundStatus);
+        return new Notification($type, $sessionId, $orderId, $amount, $currency, $refundsUuid, $refundStatus, $requestId);
     }
 }

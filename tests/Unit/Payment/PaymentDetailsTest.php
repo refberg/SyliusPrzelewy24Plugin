@@ -77,9 +77,9 @@ final class PaymentDetailsTest extends TestCase
     {
         $details = PaymentDetails::of(new Payment());
         $details->recordRefund('own', 'request-1', 500, 'PLN');
-        self::assertTrue($details->recordExternalRefund('panel-1', Refund::STATUS_COMPLETED, 300, 'PLN'));
-        self::assertFalse($details->recordExternalRefund('panel-1', Refund::STATUS_COMPLETED, 300, 'PLN'));
-        self::assertTrue($details->recordExternalRefund('panel-2', Refund::STATUS_REJECTED, 700, 'PLN'));
+        self::assertTrue($details->recordExternalRefund('panel-1', 'panel-request-1', Refund::STATUS_COMPLETED, 300, 'PLN'));
+        self::assertFalse($details->recordExternalRefund('panel-1', 'panel-request-1', Refund::STATUS_COMPLETED, 300, 'PLN'));
+        self::assertTrue($details->recordExternalRefund('panel-2', 'panel-request-2', Refund::STATUS_REJECTED, 700, 'PLN'));
 
         self::assertSame(300, $details->completedRefundAmount());
         self::assertSame(800, $details->activeRefundAmount());
@@ -95,10 +95,24 @@ final class PaymentDetailsTest extends TestCase
         self::assertFalse($details->updateRefundStatus('unknown', Refund::STATUS_COMPLETED));
     }
 
+    public function test_refunds_are_found_by_their_request_id(): void
+    {
+        $details = PaymentDetails::of(new Payment());
+        $details->recordRefund('own', 'request-1', 500, 'PLN');
+        $details->recordExternalRefund('panel-1', 'panel-request-1', Refund::STATUS_COMPLETED, 300, 'PLN');
+
+        self::assertSame('request-1', $details->getRefundRequestId('own'));
+        self::assertSame('panel-request-1', $details->getRefundRequestId('panel-1'));
+        self::assertNull($details->getRefundRequestId('unknown'));
+        self::assertTrue($details->hasRefundWithRequestId('request-1'));
+        self::assertTrue($details->hasRefundWithRequestId('panel-request-1'));
+        self::assertFalse($details->hasRefundWithRequestId('request-2'));
+    }
+
     public function test_external_refunds_are_flagged(): void
     {
         $details = PaymentDetails::of(new Payment());
-        $details->recordExternalRefund('panel-1', Refund::STATUS_COMPLETED, 300, 'PLN');
+        $details->recordExternalRefund('panel-1', 'panel-request-1', Refund::STATUS_COMPLETED, 300, 'PLN');
 
         self::assertTrue($details->refunds()['panel-1']['external'] ?? null);
         self::assertFalse($details->hasActiveRefund());

@@ -13,7 +13,11 @@ and removed in 2.0.
   read from the Przelewy24 API and checked against the payment; paid transactions are confirmed with
   `transaction/verify` only when they complete the payment.
 - Full refunds from the admin panel (`transaction/refund`) with refund notifications; refunds made in the Przelewy24
-  panel are recorded and subtracted from refunds requested by Sylius.
+  panel are recorded and subtracted from refunds requested by Sylius. After the `sign` check, the refund status and
+  amount are read from the Przelewy24 API (`refund/by/orderId`), not from the notification body. A refund that the API
+  does not list for the transaction in the payment currency, or a refund made in the Przelewy24 panel without
+  `requestId` or larger than the payment, is not recorded. When the API does not show the notified final status yet,
+  the notification is retried and nothing changes.
 - The capture payment request is completed when the notification or the status check finds its transaction paid
   (verified or not); the status check also completes capture requests left processing for transactions that were
   already paid.

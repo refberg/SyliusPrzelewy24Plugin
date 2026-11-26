@@ -4,7 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Refberg\SyliusPrzelewy24Plugin\Unit\CommandHandler;
 
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
+use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24ApiException;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\Refund;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Command\NotifyPaymentRequest;
 use Refberg\SyliusPrzelewy24Plugin\CommandHandler\NotifyPaymentRequestHandler;
@@ -23,15 +29,20 @@ use Sylius\Component\Core\Model\PaymentMethod;
 use Sylius\Component\Payment\Model\PaymentInterface;
 use Sylius\Component\Payment\Model\PaymentRequest;
 use Sylius\Component\Payment\Model\PaymentRequestInterface;
+use Sylius\Component\Payment\PaymentTransitions;
 use Sylius\Component\Payment\Repository\PaymentRequestRepositoryInterface;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
+use Tests\Refberg\SyliusPrzelewy24Plugin\Support\MemoryLogger;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\PaymentStateMachine;
 use function array_filter;
+use function array_keys;
 use function array_values;
 use function in_array;
 
 final class NotifyPaymentRequestHandlerTest extends TestCase
 {
+    private const HASH = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
+
     public function test_notification_completes_only_the_capture_request_of_its_transaction(): void
     {
         $method = self::p24Method();
@@ -81,6 +92,180 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
         self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $capture->getState());
         self::assertSame(PaymentRequestInterface::STATE_PROCESSING, $otherCapture->getState());
         self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $notifyRequest->getState());
+    }
+
+    #[TestWith([500, true])]
+    #[TestWith([503, true])]
+    #[TestWith([401, true])]
+    #[TestWith([403, true])]
+    #[TestWith([400, false])]
+    public function test_refund_read_error_follows_the_retry_policy(int $httpStatus, bool $rethrown): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willThrowException(new Przelewy24ApiException('Reading Przelewy24 refunds failed.', $httpStatus));
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('uuid-1', null));
+        self::recordRefund($payment);
+
+        try {
+            $handler(new NotifyPaymentRequest(self::HASH));
+            self::assertFalse($rethrown);
+            self::assertSame(PaymentRequestInterface::STATE_FAILED, $paymentRequest->getState());
+            self::assertSame(['error' => 'Reading Przelewy24 refunds failed.'], $paymentRequest->getResponseData());
+        } catch (Przelewy24ApiException) {
+            self::assertTrue($rethrown);
+            self::assertSame(PaymentRequestInterface::STATE_NEW, $paymentRequest->getState());
+        }
+        self::assertSame(Refund::STATUS_PENDING, PaymentDetails::of($payment)->refunds()['uuid-1']['status'] ?? null);
+    }
+
+    public function test_refund_of_sylius_is_read_by_its_recorded_request_id_and_its_status_comes_from_the_api(): void
+    {
+        $synchronizer = $this->createMock(PaymentSynchronizerInterface::class);
+        $synchronizer->expects(self::once())->method('retrieveRefund')
+            ->with(self::isInstanceOf(PaymentInterface::class), 1001, 'request-1', self::anything())
+            ->willReturn(new RefundListed('request-1', Refund::STATUS_REJECTED, 1500, 'PLN'));
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('uuid-1', 'forged-request', Refund::STATUS_COMPLETED));
+        self::recordRefund($payment);
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(['type' => Notification::TYPE_REFUND, 'refunds_uuid' => 'uuid-1', 'refund_status' => Refund::STATUS_REJECTED], $paymentRequest->getResponseData());
+        self::assertSame(Refund::STATUS_REJECTED, PaymentDetails::of($payment)->refunds()['uuid-1']['status'] ?? null);
+    }
+
+    public function test_refund_notification_without_a_request_id_fails_without_api_calls(): void
+    {
+        $synchronizer = $this->createMock(PaymentSynchronizerInterface::class);
+        $synchronizer->expects(self::never())->method('retrieveRefund');
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('panel-1', null));
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_FAILED, $paymentRequest->getState());
+        self::assertSame(['error' => 'Przelewy24 refund notification has no requestId.'], $paymentRequest->getResponseData());
+        self::assertSame([], PaymentDetails::of($payment)->refunds());
+    }
+
+    public function test_final_status_not_yet_shown_by_the_api_is_retried_without_changing_the_state(): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willReturn(new RefundListed('request-1', Refund::STATUS_PENDING, 1500, 'PLN'));
+        $logger = new MemoryLogger();
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('uuid-1', null), logger: $logger);
+        self::recordRefund($payment);
+
+        try {
+            $handler(new NotifyPaymentRequest(self::HASH));
+            self::fail('Expected an exception.');
+        } catch (Przelewy24ApiException $exception) {
+            self::assertTrue($exception->isTransient());
+        }
+
+        self::assertSame(PaymentRequestInterface::STATE_NEW, $paymentRequest->getState());
+        self::assertSame(Refund::STATUS_PENDING, PaymentDetails::of($payment)->refunds()['uuid-1']['status'] ?? null);
+        self::assertSame([[
+            'level' => 'warning',
+            'message' => 'Przelewy24 API does not show the notified final refund status yet; the notification will be retried.',
+            'context' => [
+                'payment_id' => 42,
+                'session_id' => 's-1',
+                'p24_order_id' => 1001,
+                'refunds_uuid' => 'uuid-1',
+                'request_id' => 'request-1',
+                'notified_status' => Refund::STATUS_COMPLETED,
+                'api_status' => Refund::STATUS_PENDING,
+            ],
+        ]], $logger->records);
+    }
+
+    public function test_external_refund_with_an_already_recorded_request_id_is_ignored(): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willReturn(new RefundListed('request-1', Refund::STATUS_COMPLETED, 1500, 'PLN'));
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('panel-1', 'request-1'));
+        self::recordRefund($payment);
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $paymentRequest->getState());
+        self::assertSame(['uuid-1'], array_keys(PaymentDetails::of($payment)->refunds()));
+        self::assertSame(PaymentInterface::STATE_COMPLETED, $payment->getState());
+    }
+
+    public function test_duplicate_completed_refund_notification_refunds_the_payment_once(): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willReturn(new RefundListed('panel-request-1', Refund::STATUS_COMPLETED, 1500, 'PLN'));
+        $stateMachine = new PaymentStateMachine();
+        [$handler, , $payment, $method] = $this->refundHandler($synchronizer, self::refundNotification('panel-1', 'panel-request-1'), stateMachine: $stateMachine);
+        [$duplicate] = $this->refundHandler($synchronizer, self::refundNotification('panel-1', 'panel-request-1'), $method, $payment, $stateMachine);
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+        $duplicate(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentInterface::STATE_REFUNDED, $payment->getState());
+        self::assertCount(1, array_filter($stateMachine->applied, static fn (array $applied): bool => PaymentTransitions::TRANSITION_REFUND === $applied[1]));
+        self::assertSame(1500, PaymentDetails::of($payment)->completedRefundAmount());
+    }
+
+    /**
+     * @return array{NotifyPaymentRequestHandler, PaymentRequestInterface, Payment, PaymentMethod}
+     */
+    private function refundHandler(
+        PaymentSynchronizerInterface $synchronizer,
+        Notification $notification,
+        ?PaymentMethod $method = null,
+        ?Payment $payment = null,
+        PaymentStateMachine $stateMachine = new PaymentStateMachine(),
+        LoggerInterface $logger = new NullLogger(),
+    ): array {
+        $method ??= self::p24Method();
+        $payment ??= self::paidPayment($method);
+        $paymentRequest = self::request($payment, $method, PaymentRequestInterface::ACTION_NOTIFY, PaymentRequestInterface::STATE_NEW, null);
+
+        $paymentRequestProvider = self::createStub(PaymentRequestProviderInterface::class);
+        $paymentRequestProvider->method('provide')->willReturn($paymentRequest);
+
+        $notificationParser = self::createStub(NotificationParserInterface::class);
+        $notificationParser->method('parseStoredPayload')->willReturn($notification);
+
+        $handler = new NotifyPaymentRequestHandler(
+            $paymentRequestProvider,
+            new CredentialsResolver(),
+            $notificationParser,
+            $synchronizer,
+            self::createStub(PaymentLockerInterface::class),
+            $stateMachine,
+            $logger,
+        );
+
+        return [$handler, $paymentRequest, $payment, $method];
+    }
+
+    private static function refundNotification(string $refundsUuid, ?string $requestId, string $status = Refund::STATUS_COMPLETED): Notification
+    {
+        return new Notification(Notification::TYPE_REFUND, 's-1', 1001, 1500, 'PLN', $refundsUuid, $status, $requestId);
+    }
+
+    private static function paidPayment(PaymentMethod $method): Payment
+    {
+        $payment = self::payment($method);
+        $payment->setAmount(1500);
+        $payment->setCurrencyCode('PLN');
+        $payment->setState(PaymentInterface::STATE_COMPLETED);
+        $details = PaymentDetails::of($payment);
+        $details->recordTransaction(new Transaction('s-1', 1001, Transaction::STATUS_PAYMENT_MADE, 1500, 'PLN'));
+        $details->setCompletedSessionId('s-1');
+        $details->save();
+
+        return $payment;
+    }
+
+    private static function recordRefund(Payment $payment): void
+    {
+        $details = PaymentDetails::of($payment);
+        $details->recordRefund('uuid-1', 'request-1', 1500, 'PLN');
+        $details->save();
     }
 
     private static function p24Method(): PaymentMethod

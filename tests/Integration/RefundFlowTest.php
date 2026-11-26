@@ -92,6 +92,23 @@ final class RefundFlowTest extends IntegrationTestCase
         self::assertSame(Refund::STATUS_REJECTED, $this->details($payment)->refunds()[$refundsUuid]['status'] ?? null);
     }
 
+    public function test_completed_refund_notification_while_przelewy24_reports_pending_is_retried_without_change(): void
+    {
+        $payment = $this->paidPayment();
+        $this->refundInAdmin($payment);
+        $refundsUuid = (string) $this->p24->refunds()[0]['refundsUuid'];
+        $body = $this->p24->refundNotificationBody($refundsUuid, Refund::NOTIFICATION_STATUS_COMPLETED);
+        $this->p24->setRefundApiStatus($refundsUuid, 3);
+
+        $this->client->catchExceptions(true);
+        self::assertGreaterThanOrEqual(500, $this->notify($body)->getStatusCode());
+        self::assertSame(Refund::STATUS_PENDING, $this->details($payment)->refunds()[$refundsUuid]['status'] ?? null);
+
+        $this->p24->setRefundApiStatus($refundsUuid, 1);
+        self::assertSame(Response::HTTP_OK, $this->notify($body)->getStatusCode());
+        self::assertSame(Refund::STATUS_COMPLETED, $this->details($payment)->refunds()[$refundsUuid]['status'] ?? null);
+    }
+
     public function test_refund_notification_with_wrong_sign_is_rejected(): void
     {
         $payment = $this->paidPayment();

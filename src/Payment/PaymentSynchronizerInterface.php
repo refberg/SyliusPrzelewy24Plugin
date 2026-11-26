@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Refberg\SyliusPrzelewy24Plugin\Payment;
 
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24Exception;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Config\Przelewy24Credentials;
 use Sylius\Component\Payment\Model\PaymentInterface;
 
@@ -20,4 +21,12 @@ interface PaymentSynchronizerInterface
      * @return string one of PaymentStateApplierInterface::RESULT_* or self::RESULT_INVALID
      */
     public function synchronize(PaymentInterface $payment, string $sessionId, Przelewy24Credentials $credentials, ?int $notifiedOrderId = null): string;
+
+    /**
+     * The refund as the Przelewy24 API lists it for the transaction, or null when the transaction has no refund
+     * with this requestId in the payment currency.
+     *
+     * @throws Przelewy24Exception
+     */
+    public function retrieveRefund(PaymentInterface $payment, int $orderId, string $requestId, Przelewy24Credentials $credentials): ?RefundListed;
 }

@@ -19,6 +19,7 @@ final readonly class Notification
     /**
      * @param self::TYPE_* $type
      * @param string|null $refundStatus one of Refund::STATUS_COMPLETED, Refund::STATUS_REJECTED
+     * @param string|null $requestId refund requestId; not covered by the "sign"
      */
     public function __construct(
         public string $type,
@@ -28,6 +29,7 @@ final readonly class Notification
         public string $currency,
         public ?string $refundsUuid = null,
         public ?string $refundStatus = null,
+        public ?string $requestId = null,
     ) {
     }
 }

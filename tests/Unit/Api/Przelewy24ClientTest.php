@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Refberg\SyliusPrzelewy24Plugin\Unit\Api;
 
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24ApiException;
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24TransportException;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\Refund;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundRequest;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Transaction;
 use Refberg\SyliusPrzelewy24Plugin\Api\Przelewy24Client;
@@ -20,6 +24,7 @@ use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\MemoryLogger;
 use function json_decode;
 use function json_encode;
+use function sprintf;
 use function str_repeat;
 use const JSON_THROW_ON_ERROR;
 
@@ -200,6 +205,88 @@ final class Przelewy24ClientTest extends TestCase
         self::assertSame(str_repeat('ż', 35), $this->p24->refunds()[0]['description'] ?? null);
     }
 
+    public function test_it_reads_refunds_of_a_transaction(): void
+    {
+        $client = self::clientAnswering(200, ['data' => [
+            'orderId' => 3000000001, 'sessionId' => 'order-1-abcdef012345', 'amount' => 1500, 'currency' => 'PLN',
+            'refunds' => [
+                ['batchId' => 1, 'requestId' => 'r-1', 'status' => 1, 'amount' => 100],
+                ['batchId' => 2, 'requestId' => 'r-2', 'status' => 2, 'amount' => 200],
+                ['batchId' => 3, 'requestId' => 'r-3', 'status' => 3, 'amount' => 300],
+                ['batchId' => 4, 'requestId' => 'r-4', 'status' => 4, 'amount' => 400],
+            ],
+        ], 'responseCode' => 0]);
+
+        self::assertEquals([
+            new RefundListed('r-1', Refund::STATUS_COMPLETED, 100, 'PLN'),
+            new RefundListed('r-2', Refund::STATUS_PENDING, 200, 'PLN'),
+            new RefundListed('r-3', Refund::STATUS_PENDING, 300, 'PLN'),
+            new RefundListed('r-4', Refund::STATUS_REJECTED, 400, 'PLN'),
+        ], $client->getRefunds(self::credentials(), 3000000001));
+    }
+
+    public function test_refunds_of_another_transaction_fail(): void
+    {
+        $client = self::clientAnswering(200, ['data' => [
+            'orderId' => 3000000002, 'currency' => 'PLN', 'refunds' => [['requestId' => 'r-1', 'status' => 1, 'amount' => 100]],
+        ]]);
+
+        $this->expectException(Przelewy24ApiException::class);
+        $this->expectExceptionMessage('Przelewy24 refund list response is incomplete.');
+
+        $client->getRefunds(self::credentials(), 3000000001);
+    }
+
+    /**
+     * @return iterable<string, array{array<string, mixed>}>
+     */
+    public static function incompleteRefundLists(): iterable
+    {
+        $refund = ['requestId' => 'r-1', 'status' => 1, 'amount' => 100];
+        $list = ['orderId' => 3000000001, 'currency' => 'PLN', 'refunds' => [$refund]];
+
+        yield 'no data' => [[]];
+        yield 'no currency' => [['currency' => null] + $list];
+        yield 'no refund list' => [['refunds' => null] + $list];
+        yield 'refund that is not an object' => [['refunds' => ['r-1']] + $list];
+        yield 'refund without requestId' => [['refunds' => [['requestId' => null] + $refund]] + $list];
+        yield 'refund without status' => [['refunds' => [['status' => null] + $refund]] + $list];
+        yield 'refund with an unknown status' => [['refunds' => [['status' => 5] + $refund]] + $list];
+        yield 'refund without amount' => [['refunds' => [['amount' => null] + $refund]] + $list];
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    #[DataProvider('incompleteRefundLists')]
+    public function test_incomplete_refund_list_fails(array $data): void
+    {
+        $client = self::clientAnswering(200, ['data' => $data]);
+
+        try {
+            $client->getRefunds(self::credentials(), 3000000001);
+            self::fail('Expected an exception.');
+        } catch (Przelewy24ApiException $exception) {
+            self::assertSame('Przelewy24 refund list response is incomplete.', $exception->getMessage());
+            self::assertSame(200, $exception->getHttpStatusCode());
+        }
+    }
+
+    #[TestWith([404, 'Transaction not found'])]
+    #[TestWith([500, 'Internal error'])]
+    public function test_refund_list_error_is_an_api_error(int $httpStatus, string $error): void
+    {
+        $client = self::clientAnswering($httpStatus, ['error' => $error, 'responseCode' => 0]);
+
+        try {
+            $client->getRefunds(self::credentials(), 3000000001);
+            self::fail('Expected an exception.');
+        } catch (Przelewy24ApiException $exception) {
+            self::assertSame($httpStatus, $exception->getHttpStatusCode());
+            self::assertSame(sprintf('Reading Przelewy24 refunds failed (HTTP %d: %s).', $httpStatus, $error), $exception->getMessage());
+        }
+    }
+
     public function test_rejected_credentials_are_an_authentication_failure_without_secrets_in_the_message(): void
     {
         $credentials = new Przelewy24Credentials(FakePrzelewy24::MERCHANT_ID, FakePrzelewy24::POS_ID, FakePrzelewy24::CRC_KEY, 'wrong-api-key', Environment::Sandbox);
@@ -249,6 +336,14 @@ final class Przelewy24ClientTest extends TestCase
     private function client(): Przelewy24Client
     {
         return new Przelewy24Client(new MockHttpClient($this->p24, 'https://' . FakePrzelewy24::HOST), new SignatureVerifier(), $this->logger);
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private static function clientAnswering(int $httpStatus, array $body): Przelewy24Client
+    {
+        return new Przelewy24Client(new MockHttpClient(new MockResponse((string) json_encode($body), ['http_code' => $httpStatus])), new SignatureVerifier());
     }
 
     private static function credentials(Environment $environment = Environment::Sandbox): Przelewy24Credentials

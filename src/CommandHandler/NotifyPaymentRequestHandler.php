@@ -8,6 +8,7 @@ use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Refberg\SyliusPrzelewy24Plugin\Api\Exception\Przelewy24ApiException;
 use Refberg\SyliusPrzelewy24Plugin\Api\Model\Refund;
+use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Command\NotifyPaymentRequest;
 use Refberg\SyliusPrzelewy24Plugin\Config\CredentialsResolverInterface;
 use Refberg\SyliusPrzelewy24Plugin\Config\InvalidConfigurationException;
@@ -32,8 +33,11 @@ use Sylius\Component\Payment\Repository\PaymentRequestRepositoryInterface;
  * the payment backwards. The payment is matched by the sessionId recorded in its details, not by its
  * current payment method.
  *
- * Transient API failures and rejected plugin credentials (HTTP 401/403) are rethrown:
- * with a sync:// payment request transport the endpoint then answers 5xx and Przelewy24 retries.
+ * Refund notifications only identify the refund: its status and amount are read from the Przelewy24 API.
+ *
+ * Transient API failures, rejected plugin credentials (HTTP 401/403) and a final refund status not yet shown by the
+ * Przelewy24 API are rethrown, so the notification is retried (by Przelewy24 after HTTP 5xx with a sync:// payment
+ * request transport, or by Messenger with an asynchronous one).
  *
  * @internal
  */
@@ -88,11 +92,49 @@ final readonly class NotifyPaymentRequestHandler
         }
 
         if (Notification::TYPE_REFUND === $notification->type) {
-            $this->handleRefund($notification, $details, $payment);
+            $refundsUuid = (string) $notification->refundsUuid;
+            // The notification's requestId is not signed, so it is used only for a refund the payment does not know yet.
+            $requestId = $details->getRefundRequestId($refundsUuid) ?? $notification->requestId;
+            if (null === $requestId) {
+                $this->failRequest($paymentRequest, 'Przelewy24 refund notification has no requestId.');
+
+                return;
+            }
+
+            try {
+                $refund = $this->synchronizer->retrieveRefund($payment, $notification->orderId, $requestId, $credentials);
+            } catch (Przelewy24ApiException $exception) {
+                $this->failOrRethrow($paymentRequest, $exception);
+
+                return;
+            }
+
+            if (!$refund instanceof RefundListed) {
+                $this->failRequest($paymentRequest, 'The Przelewy24 API does not list this refund for the transaction.');
+
+                return;
+            }
+
+            // A refund notification always reports a final status, so the API has not caught up yet.
+            if (!Refund::isFinalStatus($refund->status)) {
+                $this->logger->warning('Przelewy24 API does not show the notified final refund status yet; the notification will be retried.', [
+                    'payment_id' => $payment->getId(),
+                    'session_id' => $notification->sessionId,
+                    'p24_order_id' => $notification->orderId,
+                    'refunds_uuid' => $refundsUuid,
+                    'request_id' => $requestId,
+                    'notified_status' => $notification->refundStatus,
+                    'api_status' => $refund->status,
+                ]);
+
+                throw new Przelewy24ApiException('Przelewy24 API does not show the notified final refund status yet.', 503);
+            }
+
+            $this->handleRefund($notification, $refundsUuid, $refund, $details, $payment);
             $this->completeRequest($paymentRequest, [
                 'type' => Notification::TYPE_REFUND,
-                'refunds_uuid' => $notification->refundsUuid,
-                'refund_status' => $notification->refundStatus,
+                'refunds_uuid' => $refundsUuid,
+                'refund_status' => $refund->status,
             ]);
 
             return;
@@ -101,12 +143,7 @@ final readonly class NotifyPaymentRequestHandler
         try {
             $result = $this->synchronizer->synchronize($payment, $notification->sessionId, $credentials, $notification->orderId);
         } catch (Przelewy24ApiException $exception) {
-            // Rejected credentials are fixed by the merchant, so Przelewy24 should keep retrying until then.
-            if ($exception->isTransient() || $exception->isAuthenticationFailure()) {
-                throw $exception;
-            }
-
-            $this->failRequest($paymentRequest, $exception->getMessage());
+            $this->failOrRethrow($paymentRequest, $exception);
 
             return;
         }
@@ -124,16 +161,26 @@ final readonly class NotifyPaymentRequestHandler
         ]);
     }
 
-    private function handleRefund(Notification $notification, PaymentDetails $details, PaymentInterface $payment): void
+    /**
+     * @throws Przelewy24ApiException
+     */
+    private function failOrRethrow(PaymentRequestInterface $paymentRequest, Przelewy24ApiException $exception): void
     {
-        $refundsUuid = (string) $notification->refundsUuid;
-        $status = (string) $notification->refundStatus;
+        // Rejected credentials are fixed by the merchant, so Przelewy24 should keep retrying until then.
+        if ($exception->isTransient() || $exception->isAuthenticationFailure()) {
+            throw $exception;
+        }
 
+        $this->failRequest($paymentRequest, $exception->getMessage());
+    }
+
+    private function handleRefund(Notification $notification, string $refundsUuid, RefundListed $refund, PaymentDetails $details, PaymentInterface $payment): void
+    {
         if ($details->hasRefund($refundsUuid)) {
-            $details->updateRefundStatus($refundsUuid, $status);
+            $details->updateRefundStatus($refundsUuid, $refund->status);
             $details->save();
 
-            if (Refund::STATUS_REJECTED === $status) {
+            if (Refund::STATUS_REJECTED === $refund->status) {
                 $this->logger->error('Przelewy24 rejected a refund; it has to be handled manually.', [
                     'payment_id' => $payment->getId(),
                     'session_id' => $notification->sessionId,
@@ -145,7 +192,7 @@ final readonly class NotifyPaymentRequestHandler
             return;
         }
 
-        $this->handleExternalRefund($notification, $refundsUuid, $status, $details, $payment);
+        $this->handleExternalRefund($notification, $refundsUuid, $refund, $details, $payment);
     }
 
     /**
@@ -153,14 +200,17 @@ final readonly class NotifyPaymentRequestHandler
      * and once completed refunds cover the whole payment, the payment is moved to "refunded".
      * A partial refund does not change the payment state: Sylius has no state for it.
      */
-    private function handleExternalRefund(Notification $notification, string $refundsUuid, string $status, PaymentDetails $details, PaymentInterface $payment): void
+    private function handleExternalRefund(Notification $notification, string $refundsUuid, RefundListed $refund, PaymentDetails $details, PaymentInterface $payment): void
     {
         $completedSessionId = $details->getCompletedSessionId();
         if (
             null === $completedSessionId ||
             $notification->sessionId !== $completedSessionId ||
             $notification->orderId !== $details->getOrderId($completedSessionId) ||
-            $notification->currency !== $payment->getCurrencyCode()
+            $refund->amount <= 0 ||
+            $refund->amount > (int) $payment->getAmount() ||
+            // requestId is not signed: without this check one listed refund could be recorded under several refundsUuid.
+            $details->hasRefundWithRequestId($refund->requestId)
         ) {
             $this->logger->warning('Ignored Przelewy24 refund notification that does not match the paid transaction.', [
                 'payment_id' => $payment->getId(),
@@ -171,7 +221,7 @@ final readonly class NotifyPaymentRequestHandler
             return;
         }
 
-        if (!$details->recordExternalRefund($refundsUuid, $status, $notification->amount, $notification->currency)) {
+        if (!$details->recordExternalRefund($refundsUuid, $refund->requestId, $refund->status, $refund->amount, $refund->currency)) {
             return;
         }
         $details->save();
@@ -179,7 +229,7 @@ final readonly class NotifyPaymentRequestHandler
         $this->logger->info('Recorded a Przelewy24 refund made outside Sylius.', [
             'payment_id' => $payment->getId(),
             'refunds_uuid' => $refundsUuid,
-            'status' => $status,
+            'status' => $refund->status,
         ]);
 
         $this->refundPaymentWhenCovered($details, $payment);
