@@ -224,6 +224,13 @@ final class PaymentDetails
         return is_string($requestId) ? $requestId : null;
     }
 
+    public function getRefundAmount(string $refundsUuid): ?int
+    {
+        $amount = $this->refunds()[$refundsUuid]['amount'] ?? null;
+
+        return is_int($amount) ? $amount : null;
+    }
+
     public function hasRefundWithRequestId(string $requestId): bool
     {
         foreach ($this->refunds() as $refund) {

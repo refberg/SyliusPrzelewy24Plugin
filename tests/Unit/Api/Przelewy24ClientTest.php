@@ -225,6 +225,16 @@ final class Przelewy24ClientTest extends TestCase
         ], $client->getRefunds(self::credentials(), 3000000001));
     }
 
+    public function test_refunds_without_a_request_id_are_skipped(): void
+    {
+        $client = self::clientAnswering(200, ['data' => [
+            'orderId' => 3000000001, 'currency' => 'PLN',
+            'refunds' => ['r-0', ['status' => 1, 'amount' => 50], ['requestId' => 'r-1', 'status' => 1, 'amount' => 100]],
+        ]]);
+
+        self::assertEquals([new RefundListed('r-1', Refund::STATUS_COMPLETED, 100, 'PLN')], $client->getRefunds(self::credentials(), 3000000001));
+    }
+
     public function test_refunds_of_another_transaction_fail(): void
     {
         $client = self::clientAnswering(200, ['data' => [
@@ -248,8 +258,6 @@ final class Przelewy24ClientTest extends TestCase
         yield 'no data' => [[]];
         yield 'no currency' => [['currency' => null] + $list];
         yield 'no refund list' => [['refunds' => null] + $list];
-        yield 'refund that is not an object' => [['refunds' => ['r-1']] + $list];
-        yield 'refund without requestId' => [['refunds' => [['requestId' => null] + $refund]] + $list];
         yield 'refund without status' => [['refunds' => [['status' => null] + $refund]] + $list];
         yield 'refund with an unknown status' => [['refunds' => [['status' => 5] + $refund]] + $list];
         yield 'refund without amount' => [['refunds' => [['amount' => null] + $refund]] + $list];

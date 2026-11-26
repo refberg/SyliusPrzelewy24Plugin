@@ -34,6 +34,7 @@ use Sylius\Component\Payment\Repository\PaymentRequestRepositoryInterface;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\MemoryLogger;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\PaymentStateMachine;
+use function array_column;
 use function array_filter;
 use function array_keys;
 use function array_values;
@@ -118,19 +119,99 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
         self::assertSame(Refund::STATUS_PENDING, PaymentDetails::of($payment)->refunds()['uuid-1']['status'] ?? null);
     }
 
-    public function test_refund_of_sylius_is_read_by_its_recorded_request_id_and_its_status_comes_from_the_api(): void
+    public function test_refund_of_sylius_is_read_by_its_recorded_request_id(): void
     {
         $synchronizer = $this->createMock(PaymentSynchronizerInterface::class);
         $synchronizer->expects(self::once())->method('retrieveRefund')
             ->with(self::isInstanceOf(PaymentInterface::class), 1001, 'request-1', self::anything())
             ->willReturn(new RefundListed('request-1', Refund::STATUS_REJECTED, 1500, 'PLN'));
-        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('uuid-1', 'forged-request', Refund::STATUS_COMPLETED));
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('uuid-1', 'forged-request', Refund::STATUS_REJECTED));
         self::recordRefund($payment);
 
         $handler(new NotifyPaymentRequest(self::HASH));
 
         self::assertSame(['type' => Notification::TYPE_REFUND, 'refunds_uuid' => 'uuid-1', 'refund_status' => Refund::STATUS_REJECTED], $paymentRequest->getResponseData());
         self::assertSame(Refund::STATUS_REJECTED, PaymentDetails::of($payment)->refunds()['uuid-1']['status'] ?? null);
+    }
+
+    /**
+     * @param Refund::STATUS_* $apiStatus
+     */
+    #[TestWith(['panel-1', 1500, 1000, 'PLN', Refund::STATUS_COMPLETED])]
+    #[TestWith(['panel-1', 1500, 1500, 'EUR', Refund::STATUS_COMPLETED])]
+    #[TestWith(['panel-1', 1500, 1500, 'PLN', Refund::STATUS_REJECTED])]
+    #[TestWith(['uuid-1', 1500, 1500, 'PLN', Refund::STATUS_REJECTED])]
+    #[TestWith(['uuid-1', 1000, 1000, 'PLN', Refund::STATUS_COMPLETED])]
+    public function test_refund_that_differs_from_the_signed_notification_or_the_recorded_refund_fails_without_changes(
+        string $refundsUuid,
+        int $notifiedAmount,
+        int $apiAmount,
+        string $apiCurrency,
+        string $apiStatus,
+    ): void {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willReturn(new RefundListed('request-1', $apiStatus, $apiAmount, $apiCurrency));
+        $logger = new MemoryLogger();
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification($refundsUuid, 'request-1', amount: $notifiedAmount), logger: $logger);
+        self::recordRefund($payment, 'request-0');
+        $before = PaymentDetails::of($payment)->refunds();
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_FAILED, $paymentRequest->getState());
+        self::assertSame(['error' => 'The Przelewy24 API lists this refund with another amount, currency or status.'], $paymentRequest->getResponseData());
+        self::assertSame($before, PaymentDetails::of($payment)->refunds());
+        self::assertSame(PaymentInterface::STATE_COMPLETED, $payment->getState());
+        self::assertSame(['warning'], array_column($logger->records, 'level'));
+    }
+
+    #[TestWith([false])]
+    #[TestWith([true])]
+    public function test_refund_of_sylius_not_listed_by_the_api_yet_is_retried(bool $notFound): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        if ($notFound) {
+            $synchronizer->method('retrieveRefund')->willThrowException(new Przelewy24ApiException('Reading Przelewy24 refunds failed (HTTP 404).', 404));
+        } else {
+            $synchronizer->method('retrieveRefund')->willReturn(null);
+        }
+        $logger = new MemoryLogger();
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('uuid-1', null), logger: $logger);
+        self::recordRefund($payment);
+
+        try {
+            $handler(new NotifyPaymentRequest(self::HASH));
+            self::fail('Expected an exception.');
+        } catch (Przelewy24ApiException $exception) {
+            self::assertSame(503, $exception->getHttpStatusCode());
+        }
+
+        self::assertSame(PaymentRequestInterface::STATE_NEW, $paymentRequest->getState());
+        self::assertSame(Refund::STATUS_PENDING, PaymentDetails::of($payment)->refunds()['uuid-1']['status'] ?? null);
+        self::assertSame([[
+            'level' => 'warning',
+            'message' => 'Przelewy24 API does not list the notified refund yet; the notification will be retried.',
+            'context' => ['payment_id' => 42, 'session_id' => 's-1', 'p24_order_id' => 1001, 'refunds_uuid' => 'uuid-1', 'request_id' => 'request-1'],
+        ]], $logger->records);
+    }
+
+    #[TestWith([false, 'The Przelewy24 API does not list this refund for the transaction.'])]
+    #[TestWith([true, 'Reading Przelewy24 refunds failed (HTTP 404).'])]
+    public function test_refund_made_outside_sylius_and_not_listed_by_the_api_fails(bool $notFound, string $error): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        if ($notFound) {
+            $synchronizer->method('retrieveRefund')->willThrowException(new Przelewy24ApiException($error, 404));
+        } else {
+            $synchronizer->method('retrieveRefund')->willReturn(null);
+        }
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('panel-1', 'panel-request-1'));
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_FAILED, $paymentRequest->getState());
+        self::assertSame(['error' => $error], $paymentRequest->getResponseData());
+        self::assertSame([], PaymentDetails::of($payment)->refunds());
     }
 
     public function test_refund_notification_without_a_request_id_fails_without_api_calls(): void
@@ -174,6 +255,8 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
                 'request_id' => 'request-1',
                 'notified_status' => Refund::STATUS_COMPLETED,
                 'api_status' => Refund::STATUS_PENDING,
+                'notified_amount' => 1500,
+                'api_amount' => 1500,
             ],
         ]], $logger->records);
     }
@@ -242,9 +325,9 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
         return [$handler, $paymentRequest, $payment, $method];
     }
 
-    private static function refundNotification(string $refundsUuid, ?string $requestId, string $status = Refund::STATUS_COMPLETED): Notification
+    private static function refundNotification(string $refundsUuid, ?string $requestId, string $status = Refund::STATUS_COMPLETED, int $amount = 1500): Notification
     {
-        return new Notification(Notification::TYPE_REFUND, 's-1', 1001, 1500, 'PLN', $refundsUuid, $status, $requestId);
+        return new Notification(Notification::TYPE_REFUND, 's-1', 1001, $amount, 'PLN', $refundsUuid, $status, $requestId);
     }
 
     private static function paidPayment(PaymentMethod $method): Payment
@@ -261,10 +344,10 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
         return $payment;
     }
 
-    private static function recordRefund(Payment $payment): void
+    private static function recordRefund(Payment $payment, string $requestId = 'request-1'): void
     {
         $details = PaymentDetails::of($payment);
-        $details->recordRefund('uuid-1', 'request-1', 1500, 'PLN');
+        $details->recordRefund('uuid-1', $requestId, 1500, 'PLN');
         $details->save();
     }
 

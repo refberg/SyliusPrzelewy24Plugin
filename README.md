@@ -252,16 +252,16 @@ payment from Sylius therefore reach Przelewy24.
 
 Notifications with a missing or invalid `sign`, or of another merchant or shop, get HTTP 400 and are not stored.
 Notifications for unknown transactions get HTTP 404. When the Przelewy24 API cannot be reached or rejects the plugin
-credentials (HTTP 401/403), or does not show the final status of a notified refund yet, the endpoint answers with
-HTTP 5xx. This works only with a synchronous payment request transport (`sync://`, the Sylius default): with an
-asynchronous transport the endpoint answers HTTP 200 before the notification is handled, so Przelewy24 does not retry.
-Messenger then retries only these errors (not payment requests marked as failed), according to the `retry_strategy` of
-the `payment_request` transport, and sends the message to the `payment_request_failed` failure transport. That
-transport is `sync://` by default (`SYLIUS_MESSENGER_TRANSPORT_PAYMENT_REQUEST_FAILED_DSN`), which handles the message
-once more instead of keeping it; set it to a persistent transport to keep failed messages, then retry them with
-`messenger:failed:retry --transport=payment_request_failed`. Przelewy24 also repeats a notification (after 3, 5, 15, 30,
-60, 150 and 450 minutes) until the transaction is verified, so a payment is completed by a later notification once the
-API answers again.
+credentials (HTTP 401/403), or does not list a notified refund requested by Sylius or its final status yet, the endpoint
+answers with HTTP 5xx. This works only with a synchronous payment request transport (`sync://`, the Sylius default):
+with an asynchronous transport the endpoint answers HTTP 200 before the notification is handled, so Przelewy24 does not
+retry. Messenger then retries only these errors (not payment requests marked as failed), according to the
+`retry_strategy` of the `payment_request` transport, and sends the message to the `payment_request_failed` failure
+transport. That transport is `sync://` by default (`SYLIUS_MESSENGER_TRANSPORT_PAYMENT_REQUEST_FAILED_DSN`), which
+handles the message once more instead of keeping it; set it to a persistent transport to keep failed messages, then
+retry them with `messenger:failed:retry --transport=payment_request_failed`. Przelewy24 also repeats a notification
+(after 3, 5, 15, 30, 60, 150 and 450 minutes) until the transaction is verified, so a payment is completed by a later
+notification once the API answers again.
 
 ### Refunds
 
@@ -273,9 +273,12 @@ in a refund notification and is stored in the payment details.
 
 After verifying the `sign` of a refund notification, the plugin reads the refunds of the transaction from the Przelewy24
 API (`GET /api/v1/refund/by/orderId/{orderId}`) and takes the status and amount of the refund with the same `requestId`
-from there, not from the notification body. A refund that the API does not list for the transaction in the payment
-currency fails the notification payment request and changes nothing. When the API still shows the refund as pending,
-the endpoint answers with HTTP 5xx and changes nothing, so the notification is retried.
+from there, not from the notification body. The notification payment request fails and nothing changes when the
+amount, currency or final status in the API differs from the signed notification, when the amount differs from the
+refund requested by Sylius, or when the API does not list a refund made in the Przelewy24 panel for the transaction in
+the payment currency. When the API does not list a refund requested by Sylius yet, or still shows it as pending, the
+endpoint answers with HTTP 5xx and changes nothing, so the notification is retried. Refunds that the API lists without
+`requestId` are skipped.
 
 When refunds made in the Przelewy24 panel already cover the whole payment, the plugin does not call Przelewy24 and
 completes the refund payment request.

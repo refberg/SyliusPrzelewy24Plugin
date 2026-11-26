@@ -176,10 +176,15 @@ final readonly class Przelewy24Client implements Przelewy24ClientInterface
         foreach ($items as $item) {
             $item = is_array($item) ? $item : [];
             $requestId = Json::string($item, 'requestId');
+            // Such a refund cannot be matched to a notification; it must not hide the other refunds.
+            if (null === $requestId) {
+                continue;
+            }
+
             $status = Json::int($item, 'status');
             $status = null !== $status ? Refund::fromApiStatus($status) : null;
             $amount = Json::int($item, 'amount');
-            if (null === $requestId || null === $status || !is_int($amount)) {
+            if (null === $status || !is_int($amount)) {
                 throw new Przelewy24ApiException('Przelewy24 refund list response is incomplete.', $statusCode);
             }
 

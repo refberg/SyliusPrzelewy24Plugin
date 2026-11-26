@@ -12,6 +12,7 @@ use Refberg\SyliusPrzelewy24Plugin\Api\Model\RefundListed;
 use Refberg\SyliusPrzelewy24Plugin\Command\NotifyPaymentRequest;
 use Refberg\SyliusPrzelewy24Plugin\Config\CredentialsResolverInterface;
 use Refberg\SyliusPrzelewy24Plugin\Config\InvalidConfigurationException;
+use Refberg\SyliusPrzelewy24Plugin\Config\Przelewy24Credentials;
 use Refberg\SyliusPrzelewy24Plugin\Notification\Notification;
 use Refberg\SyliusPrzelewy24Plugin\Notification\NotificationParserInterface;
 use Refberg\SyliusPrzelewy24Plugin\Payment\PaymentDetails;
@@ -101,33 +102,9 @@ final readonly class NotifyPaymentRequestHandler
                 return;
             }
 
-            try {
-                $refund = $this->synchronizer->retrieveRefund($payment, $notification->orderId, $requestId, $credentials);
-            } catch (Przelewy24ApiException $exception) {
-                $this->failOrRethrow($paymentRequest, $exception);
-
-                return;
-            }
-
+            $refund = $this->confirmedRefund($paymentRequest, $notification, $refundsUuid, $requestId, $details, $payment, $credentials);
             if (!$refund instanceof RefundListed) {
-                $this->failRequest($paymentRequest, 'The Przelewy24 API does not list this refund for the transaction.');
-
                 return;
-            }
-
-            // A refund notification always reports a final status, so the API has not caught up yet.
-            if (!Refund::isFinalStatus($refund->status)) {
-                $this->logger->warning('Przelewy24 API does not show the notified final refund status yet; the notification will be retried.', [
-                    'payment_id' => $payment->getId(),
-                    'session_id' => $notification->sessionId,
-                    'p24_order_id' => $notification->orderId,
-                    'refunds_uuid' => $refundsUuid,
-                    'request_id' => $requestId,
-                    'notified_status' => $notification->refundStatus,
-                    'api_status' => $refund->status,
-                ]);
-
-                throw new Przelewy24ApiException('Przelewy24 API does not show the notified final refund status yet.', 503);
             }
 
             $this->handleRefund($notification, $refundsUuid, $refund, $details, $payment);
@@ -159,6 +136,85 @@ final readonly class NotifyPaymentRequestHandler
             'result' => $result,
             'payment_state' => $payment->getState(),
         ]);
+    }
+
+    /**
+     * The refund read from the Przelewy24 API, when it matches the signed notification. Otherwise the payment request
+     * is failed, or the notification is retried while the API has not caught up with it.
+     *
+     * @throws Przelewy24ApiException
+     */
+    private function confirmedRefund(
+        PaymentRequestInterface $paymentRequest,
+        Notification $notification,
+        string $refundsUuid,
+        string $requestId,
+        PaymentDetails $details,
+        PaymentInterface $payment,
+        Przelewy24Credentials $credentials,
+    ): ?RefundListed {
+        $context = [
+            'payment_id' => $payment->getId(),
+            'session_id' => $notification->sessionId,
+            'p24_order_id' => $notification->orderId,
+            'refunds_uuid' => $refundsUuid,
+            'request_id' => $requestId,
+        ];
+        $known = $details->hasRefund($refundsUuid);
+
+        try {
+            $refund = $this->synchronizer->retrieveRefund($payment, $notification->orderId, $requestId, $credentials);
+        } catch (Przelewy24ApiException $exception) {
+            if (!$known || !$exception->isNotFound()) {
+                $this->failOrRethrow($paymentRequest, $exception);
+
+                return null;
+            }
+
+            $refund = null;
+        }
+
+        if (!$refund instanceof RefundListed) {
+            // Sylius requested this refund, so Przelewy24 is expected to list it soon.
+            if ($known) {
+                $this->logger->warning('Przelewy24 API does not list the notified refund yet; the notification will be retried.', $context);
+
+                throw new Przelewy24ApiException('Przelewy24 API does not list the notified refund yet.', 503);
+            }
+
+            $this->failRequest($paymentRequest, 'The Przelewy24 API does not list this refund for the transaction.');
+
+            return null;
+        }
+
+        $context += [
+            'notified_status' => $notification->refundStatus,
+            'api_status' => $refund->status,
+            'notified_amount' => $notification->amount,
+            'api_amount' => $refund->amount,
+        ];
+
+        // The signed body never changes the state, but a refund that differs from it is not trusted.
+        if (
+            $refund->amount !== $notification->amount ||
+            $refund->currency !== $notification->currency ||
+            ($known && $refund->amount !== $details->getRefundAmount($refundsUuid)) ||
+            (Refund::isFinalStatus($refund->status) && $refund->status !== $notification->refundStatus)
+        ) {
+            $this->logger->warning('Ignored Przelewy24 refund notification that does not match the refund listed by the API.', $context);
+            $this->failRequest($paymentRequest, 'The Przelewy24 API lists this refund with another amount, currency or status.');
+
+            return null;
+        }
+
+        // A refund notification always reports a final status, so the API has not caught up yet.
+        if (!Refund::isFinalStatus($refund->status)) {
+            $this->logger->warning('Przelewy24 API does not show the notified final refund status yet; the notification will be retried.', $context);
+
+            throw new Przelewy24ApiException('Przelewy24 API does not show the notified final refund status yet.', 503);
+        }
+
+        return $refund;
     }
 
     /**

@@ -246,16 +246,16 @@ ostrzeżenie. Dzięki temu zwroty tej płatności z Syliusa trafiają do Przelew
 
 Powiadomienia bez poprawnego `sign` albo innego sprzedawcy lub sklepu dostają HTTP 400 i nie są zapisywane.
 Powiadomienia o nieznanych transakcjach dostają HTTP 404. Gdy API Przelewy24 jest niedostępne albo odrzuca dane
-dostępowe pluginu (HTTP 401/403) albo nie pokazuje jeszcze końcowego statusu zgłoszonego zwrotu, endpoint odpowiada
-HTTP 5xx. Działa to tylko przy synchronicznym transporcie payment requestów (`sync://`, domyślnym w Syliusie): przy
-transporcie asynchronicznym endpoint odpowiada HTTP 200 przed obsługą powiadomienia, więc Przelewy24 go nie ponawia.
-Messenger ponawia wtedy tylko te błędy (nie payment requesty oznaczone jako nieudane), zgodnie z `retry_strategy`
-transportu `payment_request`, a potem wysyła wiadomość do transportu błędów `payment_request_failed`. Ten transport
-to domyślnie `sync://` (`SYLIUS_MESSENGER_TRANSPORT_PAYMENT_REQUEST_FAILED_DSN`), który obsługuje wiadomość jeszcze raz
-zamiast ją zachować; ustaw trwały transport, żeby zachować nieudane wiadomości, i ponów je przez
-`messenger:failed:retry --transport=payment_request_failed`. Przelewy24 powtarza też powiadomienie (po 3, 5, 15, 30,
-60, 150 i 450 minutach), dopóki transakcja nie zostanie zweryfikowana, więc płatność zakończy późniejsze powiadomienie,
-gdy API znów odpowie.
+dostępowe pluginu (HTTP 401/403) albo nie pokazuje jeszcze zgłoszonego zwrotu zleconego w Syliusie lub jego końcowego
+statusu, endpoint odpowiada HTTP 5xx. Działa to tylko przy synchronicznym transporcie payment requestów (`sync://`,
+domyślnym w Syliusie): przy transporcie asynchronicznym endpoint odpowiada HTTP 200 przed obsługą powiadomienia, więc
+Przelewy24 go nie ponawia. Messenger ponawia wtedy tylko te błędy (nie payment requesty oznaczone jako nieudane),
+zgodnie z `retry_strategy` transportu `payment_request`, a potem wysyła wiadomość do transportu błędów
+`payment_request_failed`. Ten transport to domyślnie `sync://`
+(`SYLIUS_MESSENGER_TRANSPORT_PAYMENT_REQUEST_FAILED_DSN`), który obsługuje wiadomość jeszcze raz zamiast ją zachować;
+ustaw trwały transport, żeby zachować nieudane wiadomości, i ponów je przez `messenger:failed:retry
+--transport=payment_request_failed`. Przelewy24 powtarza też powiadomienie (po 3, 5, 15, 30, 60, 150 i 450 minutach),
+dopóki transakcja nie zostanie zweryfikowana, więc płatność zakończy późniejsze powiadomienie, gdy API znów odpowie.
 
 ### Zwroty
 
@@ -267,9 +267,11 @@ i jest zapisywany w szczegółach płatności.
 
 Po weryfikacji `sign` powiadomienia o zwrocie plugin odczytuje zwroty transakcji z API Przelewy24
 (`GET /api/v1/refund/by/orderId/{orderId}`) i bierze status oraz kwotę zwrotu o tym samym `requestId` stamtąd, a nie
-z treści powiadomienia. Zwrot, którego API nie pokazuje dla tej transakcji w walucie płatności, kończy payment request
-powiadomienia jako nieudany i niczego nie zmienia. Gdy API nadal pokazuje zwrot jako oczekujący, endpoint odpowiada
-HTTP 5xx i niczego nie zmienia, więc powiadomienie zostanie ponowione.
+z treści powiadomienia. Payment request powiadomienia kończy się niepowodzeniem i nic się nie zmienia, gdy kwota,
+waluta albo końcowy status w API różnią się od podpisanego powiadomienia, gdy kwota różni się od zwrotu zleconego
+w Syliusie albo gdy API nie pokazuje zwrotu zleconego w panelu Przelewy24 dla tej transakcji w walucie płatności.
+Gdy API jeszcze nie pokazuje zwrotu zleconego w Syliusie albo pokazuje go jako oczekujący, endpoint odpowiada HTTP 5xx
+i niczego nie zmienia, więc powiadomienie zostanie ponowione. Zwroty, które API pokazuje bez `requestId`, są pomijane.
 
 Gdy zwroty zlecone w panelu Przelewy24 pokrywają już całą płatność, plugin nie wywołuje Przelewy24 i kończy payment
 request zwrotu.

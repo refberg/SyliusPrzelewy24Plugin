@@ -141,12 +141,29 @@ final class CancelAndExternalRefundTest extends IntegrationTestCase
         self::assertSame([['error' => 'The Przelewy24 API does not list this refund for the transaction.']], array_values(array_map(static fn (PaymentRequestInterface $request): array => $request->getResponseData(), $failed)));
     }
 
+    public function test_panel_refund_notification_with_the_request_id_of_another_refund_is_not_recorded(): void
+    {
+        $payment = $this->paidPayment();
+        $sessionId = $this->p24->lastSessionId();
+        $first = $this->p24->createPanelRefund($sessionId, 500);
+        $second = $this->p24->createPanelRefund($sessionId, 1000);
+        $body = json_decode($this->p24->refundNotificationBody($first, Refund::NOTIFICATION_STATUS_COMPLETED), true, 8, JSON_THROW_ON_ERROR);
+        self::assertIsArray($body);
+        $body['requestId'] = 'panel-' . $second;
+
+        self::assertSame(Response::HTTP_OK, $this->notify(json_encode($body, JSON_THROW_ON_ERROR))->getStatusCode());
+
+        self::assertSame([], $this->details($payment)->refunds());
+        $failed = array_filter($this->paymentRequests(PaymentRequestInterface::ACTION_NOTIFY), static fn (PaymentRequestInterface $request): bool => PaymentRequestInterface::STATE_FAILED === $request->getState());
+        self::assertSame([['error' => 'The Przelewy24 API lists this refund with another amount, currency or status.']], array_values(array_map(static fn (PaymentRequestInterface $request): array => $request->getResponseData(), $failed)));
+    }
+
     public function test_panel_refund_above_the_payment_amount_is_ignored(): void
     {
         $payment = $this->paidPayment();
         $refundsUuid = $this->p24->createPanelRefund($this->p24->lastSessionId(), 1501);
 
-        self::assertSame(Response::HTTP_OK, $this->notify($this->p24->refundNotificationBody($refundsUuid, Refund::NOTIFICATION_STATUS_COMPLETED, 1500))->getStatusCode());
+        self::assertSame(Response::HTTP_OK, $this->notify($this->p24->refundNotificationBody($refundsUuid, Refund::NOTIFICATION_STATUS_COMPLETED))->getStatusCode());
 
         self::assertSame('completed', $this->reloadPayment($payment)->getState());
         self::assertSame([], $this->details($payment)->refunds());
