@@ -11,7 +11,9 @@ use Refberg\SyliusPrzelewy24Plugin\Config\Przelewy24Credentials;
 use Refberg\SyliusPrzelewy24Plugin\Notification\Notification;
 use Refberg\SyliusPrzelewy24Plugin\Notification\NotificationParser;
 use Refberg\SyliusPrzelewy24Plugin\Signature\SignatureVerifier;
+use Refberg\SyliusPrzelewy24Plugin\Signature\SignatureVerifierInterface;
 use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
+use function array_diff_key;
 use function json_encode;
 use const JSON_THROW_ON_ERROR;
 
@@ -84,6 +86,19 @@ final class NotificationParserTest extends TestCase
         self::assertNull($parser->parseStoredPayload(['http_request' => ['content' => null]], self::credentials()));
         self::assertNull($parser->parseStoredPayload(['http_request' => 'text'], self::credentials()));
         self::assertNull($parser->parseStoredPayload(null, self::credentials()));
+    }
+
+    public function test_notification_without_an_identifier_amount_or_currency_is_rejected(): void
+    {
+        $signatureVerifier = self::createStub(SignatureVerifierInterface::class);
+        $signatureVerifier->method('verifyTransactionNotification')->willReturn(true);
+        $parser = new NotificationParser($signatureVerifier);
+        $body = ['merchantId' => 123456, 'posId' => 123456, 'sessionId' => 'order-1-abcdef012345', 'orderId' => 3000000001, 'amount' => 1500, 'currency' => 'PLN'];
+        self::assertInstanceOf(Notification::class, $parser->parse(json_encode($body, JSON_THROW_ON_ERROR), self::credentials()));
+
+        foreach (['sessionId', 'orderId', 'amount', 'currency'] as $field) {
+            self::assertNull($parser->parse(json_encode(array_diff_key($body, [$field => true]), JSON_THROW_ON_ERROR), self::credentials()), $field);
+        }
     }
 
     private static function parser(): NotificationParser

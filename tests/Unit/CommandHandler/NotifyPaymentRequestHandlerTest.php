@@ -95,6 +95,40 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
         self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $notifyRequest->getState());
     }
 
+    #[TestWith([PaymentStateApplierInterface::RESULT_COMPLETED, true])]
+    #[TestWith([PaymentStateApplierInterface::RESULT_UNCHANGED, false])]
+    public function test_transaction_notification_restores_the_paid_method_only_when_it_completes_the_payment(string $result, bool $restored): void
+    {
+        $method = self::p24Method();
+        $payment = self::payment($method);
+        $otherMethod = new PaymentMethod();
+        $otherMethod->setCode('BANK_TRANSFER');
+        $payment->setMethod($otherMethod);
+        $notifyRequest = self::request($payment, $method, PaymentRequestInterface::ACTION_NOTIFY, PaymentRequestInterface::STATE_NEW, null);
+
+        $paymentRequestProvider = self::createStub(PaymentRequestProviderInterface::class);
+        $paymentRequestProvider->method('provide')->willReturn($notifyRequest);
+        $notificationParser = self::createStub(NotificationParserInterface::class);
+        $notificationParser->method('parseStoredPayload')->willReturn(new Notification(Notification::TYPE_TRANSACTION, 's-1', 1001, 1500, 'PLN'));
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('synchronize')->willReturn($result);
+        $locker = $this->createMock(PaymentLockerInterface::class);
+        $locker->expects(self::once())->method('lock')->with($payment);
+
+        $handler = new NotifyPaymentRequestHandler($paymentRequestProvider, new CredentialsResolver(), $notificationParser, $synchronizer, $locker, new PaymentStateMachine());
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame($restored ? $method : $otherMethod, $payment->getMethod());
+        self::assertSame(
+            $restored ? [['type' => PaymentDetails::WARNING_PAYMENT_METHOD_CHANGED, 'session_id' => 's-1']] : [],
+            PaymentDetails::of($payment)->warnings(),
+        );
+        self::assertSame(
+            ['type' => Notification::TYPE_TRANSACTION, 'session_id' => 's-1', 'result' => $result, 'payment_state' => PaymentInterface::STATE_NEW],
+            $notifyRequest->getResponseData(),
+        );
+    }
+
     #[TestWith([500, true])]
     #[TestWith([503, true])]
     #[TestWith([401, true])]
@@ -240,6 +274,7 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
             self::fail('Expected an exception.');
         } catch (Przelewy24ApiException $exception) {
             self::assertTrue($exception->isTransient());
+            self::assertSame(503, $exception->getHttpStatusCode());
         }
 
         self::assertSame(PaymentRequestInterface::STATE_NEW, $paymentRequest->getState());
@@ -259,6 +294,54 @@ final class NotifyPaymentRequestHandlerTest extends TestCase
                 'api_amount' => 1500,
             ],
         ]], $logger->records);
+    }
+
+    public function test_completed_refund_of_sylius_covering_the_payment_refunds_it(): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willReturn(new RefundListed('request-1', Refund::STATUS_COMPLETED, 1500, 'PLN'));
+        $logger = new MemoryLogger();
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('uuid-1', null), logger: $logger);
+        self::recordRefund($payment);
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(['type' => Notification::TYPE_REFUND, 'refunds_uuid' => 'uuid-1', 'refund_status' => Refund::STATUS_COMPLETED], $paymentRequest->getResponseData());
+        self::assertSame(['uuid-1'], array_keys(PaymentDetails::of($payment)->refunds()));
+        self::assertSame(PaymentInterface::STATE_REFUNDED, $payment->getState());
+        self::assertSame([], $logger->records);
+    }
+
+    public function test_completed_refund_made_outside_sylius_covering_the_payment_refunds_it(): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willReturn(new RefundListed('panel-request-1', Refund::STATUS_COMPLETED, 1500, 'PLN'));
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, self::refundNotification('panel-1', 'panel-request-1'));
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $paymentRequest->getState());
+        self::assertSame(['panel-1'], array_keys(PaymentDetails::of($payment)->refunds()));
+        self::assertSame(PaymentInterface::STATE_REFUNDED, $payment->getState());
+    }
+
+    #[TestWith(['s-2', 1001, 1500])]
+    #[TestWith(['s-1', 1002, 1500])]
+    #[TestWith(['s-1', 1001, 0])]
+    public function test_external_refund_of_another_transaction_or_without_an_amount_is_ignored(string $sessionId, int $orderId, int $amount): void
+    {
+        $synchronizer = self::createStub(PaymentSynchronizerInterface::class);
+        $synchronizer->method('retrieveRefund')->willReturn(new RefundListed('panel-request-1', Refund::STATUS_COMPLETED, $amount, 'PLN'));
+        $logger = new MemoryLogger();
+        $notification = new Notification(Notification::TYPE_REFUND, $sessionId, $orderId, $amount, 'PLN', 'panel-1', Refund::STATUS_COMPLETED, 'panel-request-1');
+        [$handler, $paymentRequest, $payment] = $this->refundHandler($synchronizer, $notification, logger: $logger);
+
+        $handler(new NotifyPaymentRequest(self::HASH));
+
+        self::assertSame(PaymentRequestInterface::STATE_COMPLETED, $paymentRequest->getState());
+        self::assertSame([], PaymentDetails::of($payment)->refunds());
+        self::assertSame(PaymentInterface::STATE_COMPLETED, $payment->getState());
+        self::assertSame(['Ignored Przelewy24 refund notification that does not match the paid transaction.'], array_column($logger->records, 'message'));
     }
 
     public function test_external_refund_with_an_already_recorded_request_id_is_ignored(): void
