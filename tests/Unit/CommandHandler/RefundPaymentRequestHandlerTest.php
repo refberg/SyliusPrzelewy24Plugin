@@ -12,9 +12,7 @@ use Refberg\SyliusPrzelewy24Plugin\CommandHandler\RefundPaymentRequestHandler;
 use Refberg\SyliusPrzelewy24Plugin\Config\CredentialsResolver;
 use Refberg\SyliusPrzelewy24Plugin\Payment\PaymentDetails;
 use Refberg\SyliusPrzelewy24Plugin\Payment\PaymentLockerInterface;
-use Refberg\SyliusPrzelewy24Plugin\Przelewy24Gateway;
 use Sylius\Bundle\PaymentBundle\Provider\PaymentRequestProviderInterface;
-use Sylius\Bundle\PayumBundle\Model\GatewayConfig;
 use Sylius\Component\Core\Model\Payment;
 use Sylius\Component\Core\Model\PaymentMethod;
 use Sylius\Component\Payment\Model\PaymentInterface;
@@ -104,28 +102,8 @@ final class RefundPaymentRequestHandlerTest extends TestCase
 
     private static function payment(): Payment
     {
-        $gatewayConfig = new GatewayConfig();
-        $gatewayConfig->setFactoryName(Przelewy24Gateway::FACTORY_NAME);
-        $gatewayConfig->setConfig([
-            Przelewy24Gateway::CONFIG_ENVIRONMENT => 'sandbox',
-            Przelewy24Gateway::CONFIG_MERCHANT_ID => (string) FakePrzelewy24::MERCHANT_ID,
-            Przelewy24Gateway::CONFIG_CRC_KEY => FakePrzelewy24::CRC_KEY,
-            Przelewy24Gateway::CONFIG_API_KEY => FakePrzelewy24::API_KEY,
-        ]);
-        $method = new PaymentMethod();
-        $method->setCode('P24');
-        $method->setGatewayConfig($gatewayConfig);
-
-        $payment = new class() extends Payment {
-            public function getId(): int
-            {
-                return 42;
-            }
-        };
-        $payment->setMethod($method);
-        $payment->setAmount(1500);
-        $payment->setCurrencyCode('PLN');
-        $payment->setState(PaymentInterface::STATE_REFUNDED);
+        $method = FakePrzelewy24::paymentMethod();
+        $payment = FakePrzelewy24::payment($method, PaymentInterface::STATE_REFUNDED);
         $details = PaymentDetails::of($payment);
         $details->addTransaction('s-1', 'token-s-1', 1500, 'PLN');
         $details->save();

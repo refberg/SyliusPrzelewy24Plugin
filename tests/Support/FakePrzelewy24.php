@@ -6,6 +6,10 @@ namespace Tests\Refberg\SyliusPrzelewy24Plugin\Support;
 
 use LogicException;
 use OutOfBoundsException;
+use Refberg\SyliusPrzelewy24Plugin\Przelewy24Gateway;
+use Sylius\Bundle\PayumBundle\Model\GatewayConfig;
+use Sylius\Component\Core\Model\Payment;
+use Sylius\Component\Core\Model\PaymentMethod;
 use Symfony\Component\HttpClient\Response\MockResponse;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 use function array_filter;
@@ -78,6 +82,40 @@ final class FakePrzelewy24
     private array $queuedFailures = [];
 
     private int $counter = 0;
+
+    public static function paymentMethod(): PaymentMethod
+    {
+        $gatewayConfig = new GatewayConfig();
+        $gatewayConfig->setFactoryName(Przelewy24Gateway::FACTORY_NAME);
+        $gatewayConfig->setGatewayName('p24');
+        $gatewayConfig->setConfig([
+            Przelewy24Gateway::CONFIG_ENVIRONMENT => 'sandbox',
+            Przelewy24Gateway::CONFIG_MERCHANT_ID => (string) self::MERCHANT_ID,
+            Przelewy24Gateway::CONFIG_CRC_KEY => self::CRC_KEY,
+            Przelewy24Gateway::CONFIG_API_KEY => self::API_KEY,
+        ]);
+        $method = new PaymentMethod();
+        $method->setCode('P24');
+        $method->setGatewayConfig($gatewayConfig);
+
+        return $method;
+    }
+
+    public static function payment(PaymentMethod $method, string $state): Payment
+    {
+        $payment = new class() extends Payment {
+            public function getId(): int
+            {
+                return 42;
+            }
+        };
+        $payment->setMethod($method);
+        $payment->setAmount(1500);
+        $payment->setCurrencyCode('PLN');
+        $payment->setState($state);
+
+        return $payment;
+    }
 
     /**
      * @param array<string, mixed> $options
