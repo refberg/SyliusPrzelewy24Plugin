@@ -94,6 +94,7 @@ final class NotificationParserTest extends TestCase
         $signatureVerifier->method('verifyTransactionNotification')->willReturn(true);
         $parser = new NotificationParser($signatureVerifier);
         $body = ['merchantId' => 123456, 'posId' => 123456, 'sessionId' => 'order-1-abcdef012345', 'orderId' => 3000000001, 'amount' => 1500, 'currency' => 'PLN'];
+        self::assertInstanceOf(Notification::class, $parser->parse(json_encode($body, JSON_THROW_ON_ERROR), self::credentials()));
 
         foreach (['sessionId', 'orderId', 'amount', 'currency'] as $field) {
             self::assertNull($parser->parse(json_encode(array_diff_key($body, [$field => true]), JSON_THROW_ON_ERROR), self::credentials()), $field);
