@@ -7,6 +7,7 @@ namespace Tests\Refberg\SyliusPrzelewy24Plugin\Unit\Signature;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Refberg\SyliusPrzelewy24Plugin\Signature\SignatureVerifier;
+use Tests\Refberg\SyliusPrzelewy24Plugin\Support\FakePrzelewy24;
 use function array_diff_key;
 use function strtoupper;
 
@@ -58,6 +59,14 @@ final class SignatureVerifierTest extends TestCase
     public function test_transaction_notification_with_a_wrong_sign_or_body_is_rejected(array $data): void
     {
         self::assertFalse((new SignatureVerifier())->verifyTransactionNotification($data, self::CRC));
+    }
+
+    public function test_field_of_another_type_is_rejected_even_when_signed_as_null(): void
+    {
+        $signedAsNull = self::notification();
+        $signedAsNull['amount'] = null;
+
+        self::assertFalse((new SignatureVerifier())->verifyTransactionNotification(['amount' => '12a', 'sign' => FakePrzelewy24::sign($signedAsNull, self::CRC)] + self::notification(), self::CRC));
     }
 
     public function test_notification_is_rejected_with_another_or_empty_crc_key(): void
