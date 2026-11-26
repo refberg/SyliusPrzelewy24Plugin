@@ -51,6 +51,20 @@ final class RefundPaymentRequestHandlerTest extends TestCase
         self::assertSame(['error' => 'No completed Przelewy24 transaction for this payment.'], $paymentRequest->getResponseData());
     }
 
+    public function test_completed_session_without_an_order_id_fails_without_calling_the_api(): void
+    {
+        $payment = self::payment();
+        $details = PaymentDetails::of($payment);
+        $details->setCompletedSessionId('s-1');
+        $details->save();
+        $paymentRequest = self::refundRequest($payment);
+
+        $this->handle($paymentRequest);
+
+        self::assertSame(PaymentRequestInterface::STATE_FAILED, $paymentRequest->getState());
+        self::assertSame(['error' => 'No completed Przelewy24 transaction for this payment.'], $paymentRequest->getResponseData());
+    }
+
     public function test_active_refund_is_not_requested_again(): void
     {
         $payment = self::payment();

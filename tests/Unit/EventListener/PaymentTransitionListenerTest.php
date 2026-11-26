@@ -31,7 +31,7 @@ final class PaymentTransitionListenerTest extends TestCase
         $payment->setMethod($method);
 
         $paymentRequestRepository = $this->createMock(PaymentRequestRepositoryInterface::class);
-        $paymentRequestRepository->method('findOneByActionPaymentAndMethod')
+        $paymentRequestRepository->expects(self::once())->method('findOneByActionPaymentAndMethod')
             ->with(PaymentRequestInterface::ACTION_REFUND, $payment, $method)
             ->willReturn(new PaymentRequest($payment, $method));
         $paymentRequestRepository->expects(self::never())->method('add');
